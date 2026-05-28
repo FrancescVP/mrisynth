@@ -1,0 +1,25 @@
+{
+  "channel_names": {
+    "0": "T1CE",
+    "1": "T1",
+    "2": "T2FLAIR",
+    "3": "T2"
+  },
+  "labels": {
+    "background": 0,
+    "NETC": 1,
+    "SNFH": 2,
+    "ET": 3
+  },
+  "numTraining": 2047,
+  "file_ending": ".nii.gz",
+  "name": "GeneralBrainTumor",
+  "description": "General brain tumour segmentation (3 labels: NETC, SNFH, ET). Merged from: BraTS-MEN 3-label (254), BraTS-PED 2023 (99), BraTS-GLI 2023 (1251), UCSF-GBM (119), UCSF-BrainMets (324). Total: 2047 cases.",
+  "dataset_composition": {
+    "MEN_meningioma": 254,
+    "PED_pediatricGlioma": 99,
+    "GLI_adultGlioma": 1251,
+    "GBM_glioblastoma": 119,
+    "MET_brainMetastases": 324
+  }
+}

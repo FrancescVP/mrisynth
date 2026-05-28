@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# uv
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Project-specific
+.claude/
+*.npz
+*.pkl
+processed/
+outputs/
+checkpoints/
+runs/
+wandb/
+latents/
+predictions/
+logs/
+
+# Large pretrained weights — track with Git LFS or store externally
+pretrained/*.pt
