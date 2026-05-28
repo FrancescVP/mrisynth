@@ -43,7 +43,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from gan_data_processing.metrics import (
+from mrisynth.metrics import (
     mae,
     mse,
     nmse,
@@ -51,7 +51,7 @@ from gan_data_processing.metrics import (
     ssim_map,
     et_metrics,
 )
-from gan_data_processing.model import Pix2Pix3dDataset, Pix2Pix3dModel, resolve_channels
+from mrisynth.model import Pix2Pix3dDataset, Pix2Pix3dModel, resolve_channels
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gan_data_processing.metrics import mae, mse, nmse, psnr, ssim
+from mrisynth.metrics import mae, mse, nmse, psnr, ssim
 
 
 def test_perfect_match_2d():

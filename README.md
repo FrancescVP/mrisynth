@@ -1,4 +1,4 @@
-# gan_data_processing
+# MRI Synthetic Generation
 
 Multimodal MRI synthesis pipeline for BraTS-style datasets.  
 Implements two synthesis approaches: **3-D pix2pix** (image-space GAN) and **RFlow** (latent rectified-flow diffusion).
@@ -177,7 +177,7 @@ SSIM and MAE reported at final epoch.
 ## Repository layout
 
 ```
-src/gan_data_processing/
+src/mrisynth/
 ├── preprocessing/        # nnUNet-style pipeline (crop, resample, normalise)
 ├── augmentation/         # batchgeneratorsv2 transforms + dataset
 ├── metrics/              # MAE, MSE, NMSE, PSNR, SSIM, ET-specific metrics
@@ -208,7 +208,7 @@ scripts/
 ```bash
 # Clone and install (creates .venv)
 git clone <repo-url>
-cd gan_data_processing
+cd mrisynth
 uv sync
 ```
 
@@ -413,9 +413,9 @@ uv run python scripts/make_gifs.py \
 ## Library usage
 
 ```python
-from gan_data_processing.model import Pix2Pix3dModel, RFlowModel, MaisiVAE
-from gan_data_processing.metrics import ssim, et_metrics
-from gan_data_processing.losses import TumorAwareGANLoss, build_velocity_loss
+from mrisynth.model import Pix2Pix3dModel, RFlowModel, MaisiVAE
+from mrisynth.metrics import ssim, et_metrics
+from mrisynth.losses import TumorAwareGANLoss, build_velocity_loss
 
 # Metrics — always use per-volume data range for Z-score normalised data
 data_range = float(gt.max() - gt.min())

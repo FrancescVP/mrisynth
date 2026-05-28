@@ -4,16 +4,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gan_data_processing.preprocessing.normalization import (
+from mrisynth.preprocessing.normalization import (
     zscore_nonzero,
     zscore_global,
     percentile_clip_zscore,
 )
-from gan_data_processing.preprocessing.cropping import (
+from mrisynth.preprocessing.cropping import (
     get_nonzero_bbox,
     crop_to_nonzero,
 )
-from gan_data_processing.preprocessing.resampling import (
+from mrisynth.preprocessing.resampling import (
     compute_new_shape,
     resample_data,
     resample_seg,

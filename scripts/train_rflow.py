@@ -46,8 +46,8 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from gan_data_processing.metrics import mae, ssim
-from gan_data_processing.model import LatentDataset, RFlowModel
+from mrisynth.metrics import mae, ssim
+from mrisynth.model import LatentDataset, RFlowModel
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +324,7 @@ def main():
     # ── Optional VAE for image-space validation ───────────────────────────────
     vae = None
     if args.vae_ckpt and Path(args.vae_ckpt).exists():
-        from gan_data_processing.model.vae import MaisiVAE
+        from mrisynth.model.vae import MaisiVAE
         print(f"Loading VAE from {args.vae_ckpt} …")
         vae = MaisiVAE.from_checkpoint(args.vae_ckpt, device=device)
         vae.eval()

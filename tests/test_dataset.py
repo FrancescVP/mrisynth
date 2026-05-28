@@ -8,11 +8,11 @@ import numpy as np
 import pytest
 import torch
 
-from gan_data_processing.model.dataset import (
+from mrisynth.model.dataset import (
     Pix2Pix3dDataset,
     resolve_channels,
 )
-from gan_data_processing.model.latent_dataset import LatentDataset
+from mrisynth.model.latent_dataset import LatentDataset
 
 
 # ---------------------------------------------------------------------------

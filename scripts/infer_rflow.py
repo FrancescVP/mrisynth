@@ -30,8 +30,8 @@ import nibabel as nib
 import numpy as np
 import torch
 
-from gan_data_processing.model.vae import MaisiVAE
-from gan_data_processing.model.rflow import RFlowModel
+from mrisynth.model.vae import MaisiVAE
+from mrisynth.model.rflow import RFlowModel
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from gan_data_processing.losses import (
+from mrisynth.losses import (
     L1SSIMLoss,
     NCCLoss,
     SSIMLoss,

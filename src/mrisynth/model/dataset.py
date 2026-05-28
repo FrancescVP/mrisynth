@@ -1,6 +1,6 @@
 """Flexible paired 3-D MRI dataset for pix2pix training.
 
-Loads nnUNet-preprocessed `.npz` files (output of `gan_data_processing.preprocessing`)
+Loads nnUNet-preprocessed `.npz` files (output of `mrisynth.preprocessing`)
 and exposes them as paired (A → B) samples suitable for Pix2Pix3dModel.
 
 Features

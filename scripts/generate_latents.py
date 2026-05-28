@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pre-compute MAISI VAE latents from preprocessed .npz files.
 
-Reads the gan_data_processing .npz dataset (Z-score normalised, shape (4,D,H,W))
+Reads the mrisynth .npz dataset (Z-score normalised, shape (4,D,H,W))
 and encodes each modality channel independently with the pretrained MAISI VAE.
 
 Output layout (one subdirectory per case):
@@ -128,7 +128,7 @@ def main():
     # Load VAE
     # -----------------------------------------------------------------------
     print(f"Loading MAISI VAE from  {args.vae_ckpt}")
-    from gan_data_processing.model.vae import MaisiVAE
+    from mrisynth.model.vae import MaisiVAE
     vae = MaisiVAE.from_checkpoint(args.vae_ckpt, device=device)
     vae.eval()
     print("VAE loaded.")

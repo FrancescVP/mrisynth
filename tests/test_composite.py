@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gan_data_processing.losses import (
+from mrisynth.losses import (
     EnhancingTumorLoss,
     TumorAwareGANLoss,
     TumorSSIMLoss,

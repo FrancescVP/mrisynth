@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gan_data_processing.losses import EnhancingTumorLoss
-from gan_data_processing.metrics import (
+from mrisynth.losses import EnhancingTumorLoss
+from mrisynth.metrics import (
     et_contrast,
     et_contrast_error,
     et_edge_ssim,

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from gan_data_processing.augmentation import (
+from mrisynth.augmentation import (
     AugConfig,
     ProcessedNiftiDataset,
     build_train_transforms,

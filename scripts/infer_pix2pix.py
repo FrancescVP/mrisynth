@@ -28,8 +28,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from gan_data_processing.model.pix2pix3d import Pix2Pix3dModel
-from gan_data_processing.model.dataset import CHANNEL_NAMES
+from mrisynth.model.pix2pix3d import Pix2Pix3dModel
+from mrisynth.model.dataset import CHANNEL_NAMES
 
 
 # ---------------------------------------------------------------------------

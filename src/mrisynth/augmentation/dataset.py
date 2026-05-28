@@ -1,6 +1,6 @@
 """PyTorch Dataset over preprocessed `.npz` files.
 
-Reads the per-case `.npz` produced by `gan_data_processing.preprocessing`
+Reads the per-case `.npz` produced by `mrisynth.preprocessing`
 and applies a `batchgeneratorsv2` `ComposeTransforms` per sample.
 """
 from __future__ import annotations

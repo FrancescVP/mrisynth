@@ -4,14 +4,14 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gan_data_processing.losses import (
+from mrisynth.losses import (
     RegionWeightedSSIMLoss,
     TumorSSIMLoss,
     region_weighted_ssim_loss,
     seg_to_mask,
     tumor_ssim_loss,
 )
-from gan_data_processing.metrics import masked_ssim, ssim
+from mrisynth.metrics import masked_ssim, ssim
 
 
 def _fake_case(B=2, C=1, D=24, H=64, W=64, with_tumor=True, seed=0):

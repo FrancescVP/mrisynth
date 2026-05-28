@@ -9,7 +9,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from gan_data_processing.model.rflow import _pad, _unpad, _build_unet
+from mrisynth.model.rflow import _pad, _unpad, _build_unet
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ def test_build_unet_single_attention_level():
 class TestRFlowModel:
     @pytest.fixture(autouse=True)
     def _setup(self, tmp_path):
-        from gan_data_processing.model.rflow import RFlowModel
+        from mrisynth.model.rflow import RFlowModel
         self.opt = _rflow_opt(tmp_path)
         self.model = RFlowModel(self.opt)
         self.model.netUNet = self.model.netUNet.cpu().float()
@@ -174,7 +174,7 @@ class TestRFlowModel:
 # ---------------------------------------------------------------------------
 
 def test_rflow_ema_weights_initialized(tmp_path):
-    from gan_data_processing.model.rflow import RFlowModel
+    from mrisynth.model.rflow import RFlowModel
     opt = _rflow_opt(tmp_path, ema_decay=0.999)
     model = RFlowModel(opt)
     assert model._ema_weights is not None
@@ -182,7 +182,7 @@ def test_rflow_ema_weights_initialized(tmp_path):
 
 
 def test_rflow_ema_updates_after_step(tmp_path):
-    from gan_data_processing.model.rflow import RFlowModel
+    from mrisynth.model.rflow import RFlowModel
     opt = _rflow_opt(tmp_path, ema_decay=0.9)
     model = RFlowModel(opt)
     model.netUNet = model.netUNet.cpu().float()

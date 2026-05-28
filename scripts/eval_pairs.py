@@ -27,12 +27,12 @@ from nibabel.processing import resample_from_to
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from gan_data_processing.losses import (  # noqa: E402
+from mrisynth.losses import (  # noqa: E402
     region_weighted_ssim_loss,
     seg_to_mask,
     tumor_ssim_loss,
 )
-from gan_data_processing.metrics import (  # noqa: E402
+from mrisynth.metrics import (  # noqa: E402
     et_metrics,
     mae,
     masked_ssim,
