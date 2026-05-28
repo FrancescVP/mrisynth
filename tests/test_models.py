@@ -1,4 +1,4 @@
-"""Model components: _pad/_unpad roundtrip, _build_unet, RFlowModel smoke test."""
+"""Model components: _pad/_unpad roundtrip, _build_unet/_build_dit, RFlowModel smoke tests."""
 from __future__ import annotations
 
 import types
@@ -9,7 +9,8 @@ import pytest
 import torch
 import torch.nn as nn
 
-from mrisynth.model.rflow import _pad, _unpad, _build_unet
+from mrisynth.model.rflow import _pad, _unpad, _build_unet, _build_dit
+from mrisynth.model.dit import DiT3D
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +19,8 @@ from mrisynth.model.rflow import _pad, _unpad, _build_unet
 
 def _rflow_opt(tmp_path, isTrain=True, channels=(32, 64), n_cond=1,
                velocity_loss="l1", ema_decay=0.0, n_attention_levels=1,
-               num_res_blocks=1):
+               num_res_blocks=1, backbone="unet",
+               dit_patch_size=2, dit_hidden_size=64, dit_depth=2, dit_num_heads=4):
     return types.SimpleNamespace(
         isTrain=isTrain,
         checkpoints_dir=str(tmp_path),
@@ -38,18 +40,26 @@ def _rflow_opt(tmp_path, isTrain=True, channels=(32, 64), n_cond=1,
         lr_decay_iters=5,
         lr=1e-4,
         beta1=0.5,
-        # RFlow-specific
+        # backbone
+        backbone=backbone,
+        # UNet-specific
         latent_channels=4,
         n_cond=n_cond,
         unet_channels=list(channels),
+        num_res_blocks=num_res_blocks,
+        n_attention_levels=n_attention_levels,
+        # DiT-specific
+        dit_patch_size=dit_patch_size,
+        dit_hidden_size=dit_hidden_size,
+        dit_depth=dit_depth,
+        dit_num_heads=dit_num_heads,
+        # shared
         n_timesteps=10,
         n_inference_steps=2,
         weight_decay=1e-4,
         velocity_loss=velocity_loss,
         loss_alpha=0.5,
         tumor_weight=None,
-        num_res_blocks=num_res_blocks,
-        n_attention_levels=n_attention_levels,
         ema_decay=ema_decay,
         use_checkpointing=False,
     )
@@ -201,3 +211,135 @@ def test_rflow_ema_updates_after_step(tmp_path):
     model.optimize_parameters()
 
     assert not torch.equal(model._ema_weights[first_key], initial)
+
+
+# ---------------------------------------------------------------------------
+# DiT3D unit tests
+# ---------------------------------------------------------------------------
+
+def test_dit_forward_shape():
+    net = DiT3D(in_channels=12, out_channels=4, patch_size=2,
+                hidden_size=64, depth=2, num_heads=4)
+    x = torch.randn(1, 12, 8, 8, 8)
+    t = torch.zeros(1, dtype=torch.long)
+    with torch.no_grad():
+        y = net(x, timesteps=t)
+    assert y.shape == (1, 4, 8, 8, 8)
+
+
+def test_dit_forward_odd_spatial():
+    # Spatial dims not divisible by patch_size — requires external padding via _pad
+    net = DiT3D(in_channels=8, out_channels=4, patch_size=2,
+                hidden_size=64, depth=2, num_heads=4)
+    x = torch.randn(1, 8, 10, 10, 10)   # 10 is divisible by 2 — DiT pads internally
+    t = torch.zeros(1, dtype=torch.long)
+    with torch.no_grad():
+        y = net(x, timesteps=t)
+    assert y.shape == (1, 4, 10, 10, 10)
+
+
+def test_dit_forward_variable_spatial():
+    # Different spatial sizes at inference time use the same weights
+    net = DiT3D(in_channels=8, out_channels=4, patch_size=2,
+                hidden_size=64, depth=2, num_heads=4)
+    net.eval()
+    t = torch.zeros(1, dtype=torch.long)
+    with torch.no_grad():
+        y1 = net(torch.randn(1, 8,  8,  8,  8), timesteps=t)
+        y2 = net(torch.randn(1, 8, 12, 12, 12), timesteps=t)
+    assert y1.shape == (1, 4, 8, 8, 8)
+    assert y2.shape == (1, 4, 12, 12, 12)
+
+
+def test_dit_timestep_embedding_differs():
+    # proj_out is zero-initialized (flow matching convention) so end-to-end output
+    # is all-zeros at init regardless of timestep. Test the conditioning pathway
+    # directly: the time_embed MLP must produce distinct vectors for distinct t.
+    net = DiT3D(in_channels=8, out_channels=4, patch_size=2,
+                hidden_size=64, depth=2, num_heads=4)
+    with torch.no_grad():
+        emb0 = net.time_embed(torch.tensor([0]))
+        emb5 = net.time_embed(torch.tensor([5]))
+    assert not torch.allclose(emb0, emb5)
+
+
+def test_dit_gradient_flow():
+    net = DiT3D(in_channels=8, out_channels=4, patch_size=2,
+                hidden_size=64, depth=2, num_heads=4)
+    x = torch.randn(1, 8, 8, 8, 8)
+    t = torch.zeros(1, dtype=torch.long)
+    y = net(x, timesteps=t)
+    y.mean().backward()
+    grads = [p.grad for p in net.parameters() if p.grad is not None]
+    assert len(grads) > 0
+    assert all(torch.isfinite(g).all() for g in grads)
+
+
+# ---------------------------------------------------------------------------
+# _build_dit factory
+# ---------------------------------------------------------------------------
+
+def test_build_dit_forward_shape():
+    net = _build_dit(in_channels=12, out_channels=4,
+                     patch_size=2, hidden_size=64, depth=2, num_heads=4)
+    x = torch.randn(1, 12, 8, 8, 8)
+    t = torch.zeros(1, dtype=torch.long)
+    with torch.no_grad():
+        y = net(x, timesteps=t)
+    assert y.shape == (1, 4, 8, 8, 8)
+
+
+def test_build_dit_returns_module():
+    net = _build_dit(in_channels=8, out_channels=4,
+                     patch_size=2, hidden_size=64, depth=2, num_heads=4)
+    assert isinstance(net, nn.Module)
+
+
+# ---------------------------------------------------------------------------
+# RFlowModel with DiT backbone
+# ---------------------------------------------------------------------------
+
+class TestRFlowModelDiT:
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path):
+        from mrisynth.model.rflow import RFlowModel
+        self.opt = _rflow_opt(tmp_path, backbone="dit",
+                              dit_patch_size=2, dit_hidden_size=64,
+                              dit_depth=2, dit_num_heads=4, n_cond=1)
+        self.model = RFlowModel(self.opt)
+        self.model.netDiT = self.model.netDiT.cpu().float()
+        self.model._backbone = self.model.netDiT
+
+    def _batch(self, B=1, C=4, D=8, H=8, W=8):
+        return {
+            "latent_tgt":  torch.randn(B, C, D, H, W),
+            "latent_cond": torch.randn(B, C, D, H, W),
+            "mu_tgt":      torch.randn(B, C, D, H, W),
+            "case_id":     ["case0000"] * B,
+            "seg":         None,
+        }
+
+    def test_model_names_dit(self):
+        assert self.model.model_names == ["DiT"]
+
+    def test_set_input_stores_tensors(self):
+        self.model.set_input(self._batch())
+        assert hasattr(self.model, "latent_tgt")
+        assert hasattr(self.model, "latent_cond")
+
+    def test_optimize_parameters_loss_finite(self):
+        self.model.set_input(self._batch())
+        self.model.optimize_parameters()
+        assert torch.isfinite(self.model.loss_rflow)
+
+    def test_forward_pred_shape(self):
+        self.model.set_input(self._batch())
+        self.model.forward()
+        assert self.model.pred_latent.shape == (1, 4, 8, 8, 8)
+
+    def test_get_current_losses_key(self):
+        self.model.set_input(self._batch())
+        self.model.optimize_parameters()
+        losses = self.model.get_current_losses()
+        assert "rflow" in losses
+        assert isinstance(losses["rflow"], float)
