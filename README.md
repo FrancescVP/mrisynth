@@ -507,6 +507,149 @@ Same as Approach 2 — the contrastive loss only affects training.
 
 ---
 
+## Approach 4 — WFM (Wavelet Flow Matching)
+
+**Architecture:**
+- No VAE. Applies a single-level 3D Haar DWT to images before the flow network.
+- After DWT: 8 subbands per channel at half spatial resolution per axis (e.g. 128³ → 8 ch × 64³).
+- Flow network: same `DiffusionModelUNet` backbone as Approach 2, now in wavelet space.
+- **Informed prior:** instead of starting from Gaussian noise, denoising starts from the mean of the conditioning modalities in wavelet space. Paths are shorter → fewer steps needed.
+- Loss: L1 on velocity field in wavelet space.
+
+**Why no VAE:** the DWT replaces the VAE as the compression/decorrelation step, avoiding VAE reconstruction error which currently caps SSIM.
+
+Based on: [WFM, MIDL 2026](https://arxiv.org/abs/2604.21146).  
+**Not yet benchmarked** on this dataset.
+
+### Train
+
+```bash
+uv run python scripts/train_wfm.py \
+    --task           t1n_t2f_to_t1c \
+    --data_dir       /path/to/preprocessed \
+    --name           wfm_best \
+    --unet_channels  64 128 256 256 \
+    --velocity_loss  l1 \
+    --lr             2e-4 \
+    --n_epochs       300 \
+    --n_inference_steps 10 \
+    --device         cuda:0
+
+tensorboard --logdir runs/
+```
+
+The informed prior cuts the number of useful inference steps to ~10 (vs 200 for standard RFlow). OT coupling can be combined freely: add `--use_ot_coupling`.
+
+### Inference
+
+```bash
+uv run python scripts/infer_wfm.py \
+    --data_dir       /path/to/preprocessed \
+    --checkpoint     checkpoints/wfm_best/latest_net_WFM.pth \
+    --unet_channels  64 128 256 256 \
+    --out_dir        predictions/wfm_best \
+    --n_cases        10 \
+    --n_inference_steps 10 \
+    --device         cuda:0
+```
+
+---
+
+## Approach 5 — cWDM (Conditional Wavelet Diffusion Model)
+
+**Architecture:**
+- No VAE. Same 3D Haar DWT infrastructure as Approach 4.
+- Diffusion: **DDPM training** (noise/epsilon parameterisation, MSE loss) + **DDIM inference** for fast sampling.
+- Gaussian prior (no informed prior).
+- Same `DiffusionModelUNet` backbone in wavelet space.
+
+**vs Approach 4:** cWDM uses standard DDPM diffusion instead of flow matching. More studied theoretically; pretrained BraTS weights available at [github.com/pfriedri/cwdm](https://github.com/pfriedri/cwdm) to sanity-check before training from scratch.
+
+Based on: [cWDM, arXiv:2411.17203](https://arxiv.org/abs/2411.17203).  
+**Not yet benchmarked** on this dataset.
+
+### Train
+
+```bash
+uv run python scripts/train_cwdm.py \
+    --task           t1n_t2f_to_t1c \
+    --data_dir       /path/to/preprocessed \
+    --name           cwdm_best \
+    --unet_channels  64 128 256 256 \
+    --beta_schedule  linear \
+    --n_epochs       300 \
+    --n_ddim_steps   50 \
+    --device         cuda:0
+
+tensorboard --logdir runs/
+```
+
+### Inference
+
+```bash
+uv run python scripts/infer_cwdm.py \
+    --data_dir       /path/to/preprocessed \
+    --checkpoint     checkpoints/cwdm_best/latest_net_cWDM.pth \
+    --unet_channels  64 128 256 256 \
+    --out_dir        predictions/cwdm_best \
+    --n_cases        10 \
+    --n_ddim_steps   50 \
+    --device         cuda:0
+```
+
+---
+
+## Approach 6 — RFlow + ControlNet (Seg-Guided Latent Diffusion)
+
+**Architecture:**
+- Same MAISI VAE (frozen) + `DiffusionModelUNet` as Approach 2.
+- Adds a **MONAI ControlNet** — a parallel encoder with the same architecture as the UNet, zero-initialised. Processes the tumour segmentation mask as spatial conditioning and injects its outputs at every skip-connection level.
+- Control signal: 4-class one-hot seg mask (`BG, NETC, SNFH, ET`) downsampled to latent resolution.
+- Falls back to plain RFlow when `seg` is absent.
+
+**Why it helps:** the seg masks are already cached alongside the latents. ControlNet gives the model explicit spatial knowledge of where each tumour subregion is, beyond what it can infer from the conditioning modalities alone.
+
+Uses MONAI's native `ControlNet` wrapper (available in MONAI ≥ 1.3).  
+**Not yet benchmarked** on this dataset.
+
+### Step 1 — Pre-compute latents (same as Approach 2)
+
+Seg files (`seg.pt`) are saved automatically alongside latents when segmentation channels are present in the `.npz` files.
+
+### Step 2 — Train
+
+```bash
+uv run python scripts/train_rflow_controlnet.py \
+    --task           t1n_t2f_to_t1c \
+    --latent_root    latents/dataset \
+    --vae_ckpt       pretrained/autoencoder_epoch273.pt \
+    --name           rflow_controlnet \
+    --unet_channels  64 128 256 256 \
+    --velocity_loss  l1 \
+    --lr             2e-4 \
+    --n_epochs       300 \
+    --device         cuda:0
+
+tensorboard --logdir runs/
+```
+
+### Inference
+
+```bash
+uv run python scripts/infer_rflow_controlnet.py \
+    --latent_dir     latents/dataset/val \
+    --vae_ckpt       pretrained/autoencoder_epoch273.pt \
+    --checkpoint     checkpoints/rflow_controlnet/latest_net_UNet.pth \
+    --controlnet_ckpt checkpoints/rflow_controlnet/latest_net_ControlNet.pth \
+    --unet_channels  64 128 256 256 \
+    --out_dir        predictions/rflow_controlnet \
+    --n_cases        10 \
+    --save_gt \
+    --device         cuda:0
+```
+
+---
+
 ## Evaluation
 
 ```bash
@@ -564,7 +707,7 @@ loss = criterion(v_pred, v_target)
 uv run pytest -q
 ```
 
-187 tests covering preprocessing, augmentation, losses, metrics, datasets, networks, and models.
+213 tests covering preprocessing, augmentation, losses, metrics, datasets, networks, and models.
 
 <details>
 <summary><strong>Test suite breakdown</strong> — per-file tables of what each group tests, plus module coverage map</summary>
@@ -673,6 +816,31 @@ Pixel-wise metrics: MAE, MSE, NMSE, PSNR, SSIM (2D/3D), multi-channel, gradient 
 
 ---
 
+### `test_wavelet.py` — 10 tests
+
+3D Haar DWT/IDWT correctness.
+
+| Group | What is checked |
+|---|---|
+| `haar_dwt3d` | Output shape `(B, 8C, D/2, H/2, W/2)`; odd spatial dim raises `ValueError` |
+| `haar_idwt3d` | Perfect roundtrip: `idwt(dwt(x)) == x` up to 1e-5 |
+| Gradient flow | Backward through both DWT and IDWT produces finite gradients |
+| `HaarDWT3D` / `HaarIDWT3D` | Module wrappers produce same result as functions |
+
+---
+
+### `test_wfm_cwdm.py` — 16 tests
+
+WFMModel, cWDMModel, and RFlowControlNetModel CPU smoke tests.
+
+| Group | What is checked |
+|---|---|
+| `WFMModel` | `set_input` applies DWT (target_wav/cond_wav exist); finite training loss; `pred_image` shape matches input B; informed prior is mean of conditioning DWTs |
+| `cWDMModel` | `set_input` applies DWT; finite DDPM training loss; `pred_image` shape matches input B |
+| `RFlowControlNetModel` | Finite loss when seg provided; graceful fallback to plain UNet when `seg=None` |
+
+---
+
 ### Coverage by module
 
 | Module | Test file |
@@ -690,6 +858,10 @@ Pixel-wise metrics: MAE, MSE, NMSE, PSNR, SSIM (2D/3D), multi-channel, gradient 
 | `model/dataset.py` | `test_dataset.py` |
 | `model/latent_dataset.py` | `test_dataset.py` |
 | `model/rflow.py` | `test_models.py` |
+| `model/wavelet.py` | `test_wavelet.py` |
+| `model/wfm.py` | `test_wfm_cwdm.py` |
+| `model/cwdm.py` | `test_wfm_cwdm.py` |
+| `model/rflow_controlnet.py` | `test_wfm_cwdm.py` |
 
 Not covered by unit tests (require GPU + VAE checkpoint): `model/pix2pix3d.py`, `model/vae.py`, `preprocessing/pipeline.py`, `preprocessing/io.py`.
 
@@ -712,6 +884,9 @@ Not covered by unit tests (require GPU + VAE checkpoint): `model/pix2pix3d.py`, 
 | **SSIM data-range note** | Use `max_value = gt.max() − gt.min()` for Z-score data, not 1.0 |
 | **OT-FM** (`--use_ot_coupling`) | Mini-batch OT couples noise to targets for shorter flow paths; allows fewer inference steps. Not yet benchmarked on this dataset. |
 | **Region contrastive loss** (`--velocity_loss l1+contrastive`) | InfoNCE term pulls ET-region velocity prediction toward GT, away from BG. Not yet benchmarked on this dataset. |
+| **WFM** (Approach 4) | Wavelet Flow Matching — no VAE, informed prior from conditioning DWTs, ~10 inference steps. Not yet benchmarked on this dataset. |
+| **cWDM** (Approach 5) | Conditional Wavelet Diffusion — no VAE, DDPM train + DDIM inference. Pretrained BraTS weights available. Not yet benchmarked on this dataset. |
+| **ControlNet** (Approach 6) | Seg-guided latent diffusion via MONAI ControlNet; seg masks already cached. Not yet benchmarked on this dataset. |
 
 ---
 
