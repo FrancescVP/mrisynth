@@ -206,6 +206,10 @@ class RFlowModel(BaseModel):
             "--ema_decay", type=float, default=0.0,
             help="EMA decay for inference weights (0 = disabled, 0.9999 recommended).",
         )
+        parser.add_argument(
+            "--grad_clip", type=float, default=0.0,
+            help="Max gradient norm for clipping (0 = disabled). Recommended 1.0 for DiT.",
+        )
         return parser
 
     def __init__(self, opt):
@@ -250,10 +254,11 @@ class RFlowModel(BaseModel):
             use_discrete_timesteps=True,
         )
 
-        self._lat_ch   = lat_ch
-        self._n_inf    = getattr(opt, "n_inference_steps", 200)
-        self._use_ckpt = getattr(opt, "use_checkpointing", True)
+        self._lat_ch    = lat_ch
+        self._n_inf     = getattr(opt, "n_inference_steps", 200)
+        self._use_ckpt  = getattr(opt, "use_checkpointing", True)
         self._ema_decay = getattr(opt, "ema_decay", 0.0)
+        self._grad_clip = getattr(opt, "grad_clip", 0.0)
         self._ema_weights: dict | None = None
 
         if self.isTrain:
@@ -359,6 +364,9 @@ class RFlowModel(BaseModel):
             else:
                 self.loss_rflow = self.criterion(v_pred, target_v)
         self._scaler.scale(self.loss_rflow).backward()
+        if self._grad_clip > 0:
+            self._scaler.unscale_(self.optimizer_UNet)
+            torch.nn.utils.clip_grad_norm_(self._backbone.parameters(), self._grad_clip)
         self._scaler.step(self.optimizer_UNet)
         self._scaler.update()
 

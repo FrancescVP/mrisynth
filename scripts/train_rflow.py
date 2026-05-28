@@ -186,6 +186,8 @@ def parse_args() -> argparse.Namespace:
     # Shared
     g.add_argument("--ema_decay", type=float, default=0.0,
                    help="EMA decay for inference weights (0=disabled, 0.9999 recommended).")
+    g.add_argument("--grad_clip", type=float, default=0.0,
+                   help="Max gradient norm (0=disabled). Recommended 1.0 for DiT.")
     g.add_argument("--n_timesteps", type=int, default=1000)
     g.add_argument("--n_inference_steps", type=int, default=200,
                    help="Denoising steps during validation.")
@@ -290,6 +292,7 @@ def _build_opt(args: argparse.Namespace, n_cond: int) -> SimpleNamespace:
         loss_alpha        = args.loss_alpha,
         tumor_weight      = args.tumor_weight,
         ema_decay         = args.ema_decay,
+        grad_clip         = args.grad_clip,
     )
 
 
