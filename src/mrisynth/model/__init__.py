@@ -15,6 +15,10 @@ from .networks import (
     init_weights,
     init_net,
 )
+from .wavelet import HaarDWT3D, HaarIDWT3D, haar_dwt3d, haar_idwt3d
+from .wfm import WFMModel
+from .cwdm import cWDMModel
+from .rflow_controlnet import RFlowControlNetModel
 
 __all__ = [
     "Pix2Pix3dModel",
@@ -35,4 +39,11 @@ __all__ = [
     "get_scheduler",
     "init_weights",
     "init_net",
+    "HaarDWT3D",
+    "HaarIDWT3D",
+    "haar_dwt3d",
+    "haar_idwt3d",
+    "WFMModel",
+    "cWDMModel",
+    "RFlowControlNetModel",
 ]
