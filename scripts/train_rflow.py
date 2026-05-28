@@ -310,10 +310,21 @@ def main():
     device = torch.device(args.device)
 
     # ── Datasets ─────────────────────────────────────────────────────────────
+    def collate_fn(batch):
+        # default_collate can't handle seg=None; keep it as-is when absent
+        from torch.utils.data.dataloader import default_collate
+        keys = batch[0].keys()
+        out = {}
+        for k in keys:
+            vals = [b[k] for b in batch]
+            out[k] = None if vals[0] is None else default_collate(vals)
+        return out
+
     train_ds = LatentDataset(train_dir, target_key=target_key, cond_keys=cond_keys)
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
         num_workers=args.num_workers, pin_memory=True,
+        collate_fn=collate_fn,
     )
 
     val_loader = None
@@ -322,7 +333,8 @@ def main():
         val_ds = LatentDataset(val_dir, target_key=target_key, cond_keys=cond_keys,
                                deterministic=True)
         val_loader = DataLoader(val_ds, batch_size=1, shuffle=False,
-                                num_workers=2, pin_memory=True)
+                                num_workers=2, pin_memory=True,
+                                collate_fn=collate_fn)
 
     # ── Optional VAE for image-space validation ───────────────────────────────
     vae = None
