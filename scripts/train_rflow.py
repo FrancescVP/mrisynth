@@ -164,13 +164,26 @@ def parse_args() -> argparse.Namespace:
                    help="Number of conditioning modalities (overridden by --task).")
 
     g = p.add_argument_group("model")
+    g.add_argument("--backbone", default="unet", choices=["unet", "dit"],
+                   help="Velocity backbone: unet (DiffusionModelUNet) or dit (DiT3D).")
     g.add_argument("--latent_channels", type=int, default=4)
+    # UNet options
     g.add_argument("--unet_channels", nargs="+", type=int, default=[64, 128, 256, 256],
-                   help="DiffusionUNet channel widths per level.")
+                   help="[unet] DiffusionUNet channel widths per level.")
     g.add_argument("--num_res_blocks", type=int, default=2,
-                   help="ResNet blocks per UNet level.")
+                   help="[unet] ResNet blocks per UNet level.")
     g.add_argument("--n_attention_levels", type=int, default=2,
-                   help="Number of deepest UNet levels with self-attention.")
+                   help="[unet] Number of deepest UNet levels with self-attention.")
+    # DiT options
+    g.add_argument("--dit_patch_size", type=int, default=2,
+                   help="[dit] Spatial patch size. Default 2.")
+    g.add_argument("--dit_hidden_size", type=int, default=384,
+                   help="[dit] Transformer hidden dim (256=small, 384=base, 512=large).")
+    g.add_argument("--dit_depth", type=int, default=12,
+                   help="[dit] Number of DiT blocks.")
+    g.add_argument("--dit_num_heads", type=int, default=6,
+                   help="[dit] Attention heads.")
+    # Shared
     g.add_argument("--ema_decay", type=float, default=0.0,
                    help="EMA decay for inference weights (0=disabled, 0.9999 recommended).")
     g.add_argument("--n_timesteps", type=int, default=1000)
@@ -242,36 +255,41 @@ def _resolve_dirs(args: argparse.Namespace) -> tuple[Path, Path | None]:
 
 def _build_opt(args: argparse.Namespace, n_cond: int) -> SimpleNamespace:
     return SimpleNamespace(
-        isTrain          = True,
-        checkpoints_dir  = args.checkpoints_dir,
-        name             = args.name,
-        device           = torch.device(args.device),
-        verbose          = False,
-        init_type        = "kaiming",
-        init_gain        = 0.02,
-        continue_train   = args.continue_train,
-        epoch            = args.epoch,
-        load_iter        = args.load_iter,
-        norm             = "instance",
-        lr_policy        = args.lr_policy,
-        n_epochs         = args.n_epochs,
-        n_epochs_decay   = args.n_epochs_decay,
-        epoch_count      = 1,
-        lr_decay_iters   = args.lr_decay_iters,
-        lr               = args.lr,
-        beta1            = args.beta1,
-        weight_decay     = args.weight_decay,
-        latent_channels  = args.latent_channels,
-        n_cond           = n_cond,
-        unet_channels    = args.unet_channels,
-        n_timesteps      = args.n_timesteps,
-        n_inference_steps = args.n_inference_steps,
-        velocity_loss    = args.velocity_loss,
-        loss_alpha       = args.loss_alpha,
-        tumor_weight     = args.tumor_weight,
-        num_res_blocks   = args.num_res_blocks,
+        isTrain           = True,
+        checkpoints_dir   = args.checkpoints_dir,
+        name              = args.name,
+        device            = torch.device(args.device),
+        verbose           = False,
+        init_type         = "kaiming",
+        init_gain         = 0.02,
+        continue_train    = args.continue_train,
+        epoch             = args.epoch,
+        load_iter         = args.load_iter,
+        norm              = "instance",
+        lr_policy         = args.lr_policy,
+        n_epochs          = args.n_epochs,
+        n_epochs_decay    = args.n_epochs_decay,
+        epoch_count       = 1,
+        lr_decay_iters    = args.lr_decay_iters,
+        lr                = args.lr,
+        beta1             = args.beta1,
+        weight_decay      = args.weight_decay,
+        latent_channels   = args.latent_channels,
+        n_cond            = n_cond,
+        backbone          = args.backbone,
+        unet_channels     = args.unet_channels,
+        num_res_blocks    = args.num_res_blocks,
         n_attention_levels = args.n_attention_levels,
-        ema_decay        = args.ema_decay,
+        dit_patch_size    = args.dit_patch_size,
+        dit_hidden_size   = args.dit_hidden_size,
+        dit_depth         = args.dit_depth,
+        dit_num_heads     = args.dit_num_heads,
+        n_timesteps       = args.n_timesteps,
+        n_inference_steps  = args.n_inference_steps,
+        velocity_loss     = args.velocity_loss,
+        loss_alpha        = args.loss_alpha,
+        tumor_weight      = args.tumor_weight,
+        ema_decay         = args.ema_decay,
     )
 
 
@@ -325,13 +343,21 @@ def main():
 
     task_label = TASKS[args.task]["label"] if args.task else f"{cond_keys} → {target_key}"
     n_total = args.n_epochs + args.n_epochs_decay
+    if args.backbone == "dit":
+        backbone_str = (
+            f"DiT3D  patch={args.dit_patch_size}  "
+            f"hidden={args.dit_hidden_size}  depth={args.dit_depth}  heads={args.dit_num_heads}"
+        )
+    else:
+        backbone_str = f"UNet  channels={args.unet_channels}"
+
     print("=" * 60)
     print(f"  Task        : {task_label}")
     print(f"  Experiment  : {name}")
     print(f"  Train cases : {len(train_ds)}")
     print(f"  Val cases   : {len(val_ds) if val_ds else 0}")
     print(f"  Epochs      : {args.n_epochs} + {args.n_epochs_decay} decay = {n_total}")
-    print(f"  UNet ch     : {args.unet_channels}")
+    print(f"  Backbone    : {backbone_str}")
     print(f"  Velocity loss: {args.velocity_loss}")
     print(f"  Timesteps   : {args.n_timesteps}  (val inference: {args.n_inference_steps})")
     print(f"  Device      : {device}")
