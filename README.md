@@ -178,27 +178,80 @@ SSIM and MAE reported at final epoch.
 
 ```
 src/mrisynth/
-├── preprocessing/        # nnUNet-style pipeline (crop, resample, normalise)
-├── augmentation/         # batchgeneratorsv2 transforms + dataset
-├── metrics/              # MAE, MSE, NMSE, PSNR, SSIM, ET-specific metrics
-├── losses/               # Tumor-aware GAN losses + RFlow velocity losses
+├── preprocessing/
+│   ├── pipeline.py          # nnUNet-style end-to-end preprocessing pipeline
+│   ├── normalization.py     # Z-score, percentile-clip normalisation
+│   ├── cropping.py          # Non-zero bounding-box crop
+│   ├── resampling.py        # Isotropic resampling (data + seg)
+│   └── io.py                # .b2nd / NIfTI readers
+│
+├── augmentation/
+│   ├── transforms.py        # batchgeneratorsv2 spatial + intensity transforms
+│   └── dataset.py           # AugConfig + transform builder helpers
+│
+├── metrics/
+│   ├── ssim.py              # Per-voxel SSIM map, mean SSIM, masked SSIM
+│   ├── pixelwise.py         # MAE, MSE, NMSE, PSNR
+│   └── enhancing_tumor.py   # ET-specific: Pearson, MAE, edge-SSIM, loc-Dice
+│
+├── losses/
+│   ├── velocity.py          # SegAwareLoss base + L1/L2/NCC/SSIM/contrastive
+│   │                        #   velocity losses for RFlow / WFM / cWDM
+│   ├── composite.py         # TumorAwareGANLoss (pix2pix)
+│   ├── enhancing_tumor.py   # EnhancingTumorLoss (ET-region pixel loss)
+│   └── tumor_ssim.py        # TumorSSIMLoss, RegionWeightedSSIMLoss
+│
 └── model/
-    ├── networks.py        # UnetGenerator3D, NLayerDiscriminator3D, GANLoss
-    ├── pix2pix3d.py       # Pix2Pix3dModel — image-space GAN
-    ├── rflow.py           # RFlowModel — latent rectified-flow diffusion
-    ├── vae.py             # MaisiVAE — frozen MAISI autoencoder wrapper
-    ├── dataset.py         # Pix2Pix3dDataset
-    └── latent_dataset.py  # LatentDataset — pre-cached VAE latents
+    ├── networks.py           # UnetGenerator3D, NLayerDiscriminator3D, GANLoss
+    │                         #   define_G_3d / define_D_3d factories
+    ├── base_model.py         # BaseModel — checkpoint I/O, LR scheduling
+    ├── dataset.py            # Pix2Pix3dDataset — .npz → paired (A, B, seg)
+    ├── latent_dataset.py     # LatentDataset — pre-cached MAISI VAE latents
+    ├── vae.py                # MaisiVAE — frozen MAISI autoencoder wrapper
+    ├── wavelet.py            # haar_dwt3d / haar_idwt3d (pure PyTorch, no deps)
+    │
+    ├── pix2pix3d.py          # Pix2Pix3dModel  — Approach 1
+    ├── rflow.py              # RFlowModel       — Approach 2  (UNet, latent space)
+    │                         #   + _ot_couple() for OT-FM (Approach 2.2)
+    ├── dit.py                # DiT3D backbone   — Approach 2.3 (drop-in for UNet)
+    ├── wfm.py                # WFMModel         — Approach 4  (wavelet + informed prior)
+    ├── cwdm.py               # cWDMModel        — Approach 5  (wavelet + DDPM/DDIM)
+    └── rflow_controlnet.py   # RFlowControlNetModel — Approach 6 (seg ControlNet)
 
 scripts/
-├── train_pix2pix3d.py     # Pix2Pix training loop + TensorBoard
-├── train_rflow.py         # RFlow training loop + TensorBoard
-├── generate_latents.py    # Pre-compute MAISI VAE latents (one-time)
-├── infer_pix2pix.py       # Run pix2pix inference, save NIfTI predictions
-├── infer_rflow.py         # Run RFlow inference, save NIfTI predictions
-├── eval_pairs.py          # Evaluate pred/GT NIfTI pairs (MAE, SSIM, ET metrics)
-├── make_gifs.py           # Animated axial-slice GIFs (T1n | pred | GT)
-└── export_gifs.py         # Multi-experiment sweep GIFs for comparison
+├── train_pix2pix3d.py        # Pix2Pix training loop + TensorBoard
+├── train_rflow.py            # RFlow / OT-FM / contrastive training
+├── train_wfm.py              # WFM training loop
+├── train_cwdm.py             # cWDM training loop
+├── train_rflow_controlnet.py # RFlow + ControlNet training loop
+│
+├── generate_latents.py       # Pre-compute MAISI VAE latents (one-time, ~2 h)
+│
+├── infer_pix2pix.py          # Pix2Pix inference → NIfTI
+├── infer_rflow.py            # RFlow inference → NIfTI (VAE decode)
+├── infer_wfm.py              # WFM inference → NIfTI (IDWT)
+├── infer_cwdm.py             # cWDM inference → NIfTI (IDWT, DDIM)
+├── infer_rflow_controlnet.py # ControlNet inference → NIfTI
+│
+├── eval_pairs.py             # Evaluate pred/GT NIfTI pairs (MAE, SSIM, ET)
+├── export_tables.py          # Aggregate metrics across experiments → CSV/table
+├── make_gifs.py              # Animated axial-slice GIFs (T1n | pred | GT)
+└── export_gifs.py            # Multi-experiment sweep GIFs for comparison
+
+tests/
+├── test_preprocessing.py     # 24 tests — normalisation, crop, resample
+├── test_augmentation.py      #  6 tests — transform pipeline, DataLoader collation
+├── test_networks.py          # 19 tests — UNet/PatchGAN primitives, GANLoss, scheduler
+├── test_dataset.py           # 16 tests — channel resolution, Pix2Pix3dDataset, LatentDataset
+├── test_models.py            # 18 tests — _pad/_unpad, _ot_couple, UNet/DiT builders,
+│                             #             RFlowModel (UNet + DiT), EMA, OT-FM, contrastive
+├── test_wavelet.py           # 10 tests — Haar DWT/IDWT shape, roundtrip, gradient flow
+├── test_wfm_cwdm.py          # 16 tests — WFMModel, cWDMModel, RFlowControlNetModel smoke
+├── test_velocity_losses.py   # 34 tests — all velocity loss classes + factory
+├── test_composite.py         #  8 tests — TumorAwareGANLoss
+├── test_enhancing_tumor.py   # 10 tests — ET metrics + EnhancingTumorLoss
+├── test_tumor_ssim.py        #  8 tests — TumorSSIMLoss, RegionWeightedSSIMLoss
+└── test_metrics.py           #  8 tests — MAE, MSE, NMSE, PSNR, SSIM
 ```
 
 ---
