@@ -288,7 +288,7 @@ uv run python scripts/infer_pix2pix.py \
 
 ---
 
-## Approach 2 — RFlow (Latent Diffusion)
+## Approach 2 — RFlow (Latent Diffusion, UNet backbone)
 
 **Architecture:**  
 - Encoder/Decoder: MAISI VAE (frozen, ~20.9 M params, 4× spatial compression)  
@@ -349,28 +349,14 @@ Expected (900 cases, 300 ep): SSIM ≈ 0.765, MAE ≈ 0.063.
 | `t1n_to_t2f` | T1w | FLAIR |
 | `t1n_to_t2w` | T1w | T2w |
 
-#### Advanced options
+#### Other options
 
 ```bash
 # Tumor-weighted velocity loss (requires seg files alongside latents)
 --velocity_loss tumor_l1 --tumor_weight 5.0
 
-# Region-specific contrastive loss — MAISI-v2 style (requires seg files)
-# Adds InfoNCE term pulling predicted ET velocity toward target ET,
-# away from background. Improves ET-region fidelity without changing the backbone.
---velocity_loss l1+contrastive --contrastive_weight 0.1 --contrastive_temp 0.1
-
-# OT-FM: mini-batch optimal transport noise coupling
-# Permutes noise samples within each batch to minimise total L2 cost to targets,
-# shortening flow paths and allowing fewer inference steps at convergence.
-# No-op for batch_size=1; effect grows with larger batches.
---use_ot_coupling
-
 # EMA weights for inference (marginal improvement)
 --ema_decay 0.9999
-
-# Gradient clipping (recommended for DiT backbone)
---grad_clip 1.0
 
 # Lightweight alternative: rflow_tiny at 19 M params
 --unet_channels 32 64 128 128
@@ -383,15 +369,141 @@ Expected (900 cases, 300 ep): SSIM ≈ 0.765, MAE ≈ 0.063.
 
 ```bash
 uv run python scripts/infer_rflow.py \
-    --latent_dir  latents/dataset/val \
-    --vae_ckpt    pretrained/autoencoder_epoch273.pt \
-    --checkpoint  checkpoints/rflow_best/latest_net_UNet.pth \
+    --latent_dir    latents/dataset/val \
+    --vae_ckpt      pretrained/autoencoder_epoch273.pt \
+    --checkpoint    checkpoints/rflow_best/latest_net_UNet.pth \
     --unet_channels 64 128 256 256 \
-    --out_dir     predictions/rflow_best \
-    --n_cases     10 \
+    --out_dir       predictions/rflow_best \
+    --n_cases       10 \
     --save_gt \
-    --device      cuda:0
+    --device        cuda:0
 ```
+
+---
+
+## Approach 2.2 — RFlow + OT-FM (Optimal Transport Noise Coupling)
+
+**What changes:** Same UNet (or DiT) backbone and training loop as Approach 2, but noise samples within each mini-batch are permuted before the forward diffusion step to minimise total L2 cost between noise and targets (mini-batch optimal transport).
+
+**Why it helps:** Standard RFlow pairs each noise sample with whichever target lands in the same batch slot — a random coupling. OT finds the cheapest permutation, making the straight-line paths from noise to target shorter on average. Shorter paths → the flow network has an easier job → it can converge with fewer inference steps at test time.  
+Based on: [MOTFM, MICCAI 2025](https://arxiv.org/abs/2503.00266).
+
+**Requirements:** `scipy` (already a project dependency). No-op for `batch_size=1`; effect grows with larger batches.
+
+**Not yet benchmarked** on this dataset.
+
+### Train
+
+Drop-in on top of any Approach 2 command — just add `--use_ot_coupling`:
+
+```bash
+uv run python scripts/train_rflow.py \
+    --task           t1n_t2f_to_t1c \
+    --latent_root    latents/dataset \
+    --vae_ckpt       pretrained/autoencoder_epoch273.pt \
+    --name           rflow_otfm \
+    --unet_channels  64 128 256 256 \
+    --velocity_loss  l1 \
+    --lr             2e-4 \
+    --n_epochs       300 \
+    --use_ot_coupling \
+    --device         cuda:0
+```
+
+### Inference
+
+Same as Approach 2 — the coupling only affects training, not inference.
+
+---
+
+## Approach 2.3 — RFlow + DiT Backbone
+
+**What changes:** Replaces the convolutional `DiffusionModelUNet` with `DiT3D` — a 3-D Diffusion Transformer using adaLN-Zero timestep conditioning, factorized per-axis positional embeddings, and flash attention (`torch.nn.functional.scaled_dot_product_attention`).
+
+**Why it helps:** Transformers capture long-range spatial dependencies with global self-attention, while the UNet's receptive field is limited by its depth. For large tumour regions or cross-hemisphere correlations this can matter. The positional embeddings are interpolated at runtime so the model generalises to latent volumes of any size without retraining.
+
+**Tradeoffs:** Higher memory (O(N²) attention, N = latent tokens); `--grad_clip 1.0` is recommended for stable training. For a 32×40×32 latent at patch_size=2, N ≈ 40 k tokens — consider `--batch_size 1` and gradient checkpointing.
+
+**Not yet benchmarked** on this dataset.
+
+### Train
+
+```bash
+uv run python scripts/train_rflow.py \
+    --task            t1n_t2f_to_t1c \
+    --latent_root     latents/dataset \
+    --vae_ckpt        pretrained/autoencoder_epoch273.pt \
+    --name            rflow_dit \
+    --backbone        dit \
+    --dit_hidden_size 384 \
+    --dit_depth       12 \
+    --dit_num_heads   6 \
+    --dit_patch_size  2 \
+    --velocity_loss   l1 \
+    --lr              1e-4 \
+    --grad_clip       1.0 \
+    --n_epochs        300 \
+    --device          cuda:0
+```
+
+OT-FM coupling can be combined freely: add `--use_ot_coupling`.
+
+### Inference
+
+```bash
+uv run python scripts/infer_rflow.py \
+    --latent_dir      latents/dataset/val \
+    --vae_ckpt        pretrained/autoencoder_epoch273.pt \
+    --checkpoint      checkpoints/rflow_dit/latest_net_DiT.pth \
+    --backbone        dit \
+    --dit_hidden_size 384 \
+    --dit_depth       12 \
+    --dit_num_heads   6 \
+    --out_dir         predictions/rflow_dit \
+    --n_cases         10 \
+    --save_gt \
+    --device          cuda:0
+```
+
+---
+
+## Approach 3 — MAISI-v2 Region-Specific Contrastive Loss
+
+**What changes:** Adds an InfoNCE contrastive term on top of the standard L1 velocity loss. The model is trained to distinguish its own velocity prediction in the enhancing-tumour (ET) region from the background velocity — pulling ET predictions toward the GT and separating them from background statistics.
+
+**Why it helps:** The L1 loss treats all voxels equally. ET is a small, high-stakes region (contrast-enhancing tumour drives diagnosis). The contrastive term gives ET an extra gradient signal without changing the backbone or the training schedule.  
+Based on: [MAISI-v2, arXiv:2508.05772](https://arxiv.org/abs/2508.05772).
+
+**Requirements:** Segmentation latents (`seg.pt`) must be present alongside the cached latents — `generate_latents.py` saves them automatically when segmentation `.npz` channels are present.
+
+**Not yet benchmarked** on this dataset.
+
+### Train
+
+Drop-in on top of any Approach 2 / 2.2 / 2.3 command — swap the velocity loss:
+
+```bash
+uv run python scripts/train_rflow.py \
+    --task               t1n_t2f_to_t1c \
+    --latent_root        latents/dataset \
+    --vae_ckpt           pretrained/autoencoder_epoch273.pt \
+    --name               rflow_contrastive \
+    --unet_channels      64 128 256 256 \
+    --velocity_loss      l1+contrastive \
+    --contrastive_weight 0.1 \
+    --contrastive_temp   0.1 \
+    --lr                 2e-4 \
+    --n_epochs           300 \
+    --device             cuda:0
+```
+
+Can be combined with OT-FM coupling: add `--use_ot_coupling`.
+
+**Tuning `--contrastive_weight`:** start at 0.1. Higher values (0.5–1.0) push ET fidelity harder but risk destabilising the global L1 term. Monitor `loss_rflow` in TensorBoard — it should decrease smoothly.
+
+### Inference
+
+Same as Approach 2 — the contrastive loss only affects training.
 
 ---
 
