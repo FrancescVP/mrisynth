@@ -58,7 +58,11 @@ def make_loader(n_cases: int, lat_ch: int, spatial: int,
 # ---------------------------------------------------------------------------
 
 def build_opt(tmp_dir: str, backbone: str, device: torch.device,
-              lat_ch: int, n_cond: int, spatial: int) -> SimpleNamespace:
+              lat_ch: int, n_cond: int, spatial: int, epochs: int) -> SimpleNamespace:
+    # Schedule: constant LR for first half, linear decay to 0 over second half.
+    # n_epochs + n_epochs_decay must equal the actual number of training epochs
+    # or the linear scheduler goes negative and flips gradient direction.
+    half = epochs // 2
     return SimpleNamespace(
         isTrain           = True,
         checkpoints_dir   = tmp_dir,
@@ -72,8 +76,8 @@ def build_opt(tmp_dir: str, backbone: str, device: torch.device,
         load_iter         = 0,
         norm              = "instance",
         lr_policy         = "linear",
-        n_epochs          = 5,
-        n_epochs_decay    = 5,
+        n_epochs          = half,
+        n_epochs_decay    = epochs - half,
         epoch_count       = 1,
         lr_decay_iters    = 5,
         lr                = 1e-4,
@@ -111,7 +115,7 @@ def run(backbone: str, loader: DataLoader, device: torch.device,
     from mrisynth.model.rflow import RFlowModel
 
     with tempfile.TemporaryDirectory() as tmp:
-        opt   = build_opt(tmp, backbone, device, lat_ch, n_cond, spatial)
+        opt   = build_opt(tmp, backbone, device, lat_ch, n_cond, spatial, epochs)
         model = RFlowModel(opt)
         model.setup(opt)
         model.train_mode()
