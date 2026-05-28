@@ -11,7 +11,8 @@ Interface
 Architecture
 ------------
   1. Patchify : Conv3d(in_ch, hidden, ks=patch_size, stride=patch_size)
-  2. Add learnable 3-D positional embedding (interpolated for variable spatial size)
+  2. Add factorized per-axis positional embeddings (D + H + W, interpolated for
+     variable spatial size — correct for any latent shape, no cube-root assumption)
   3. N × DiTBlock (LayerNorm + SDPA + adaLN-Zero gating on timestep emb)
   4. Unpatchify : Linear(hidden, patch_size^3 * out_ch) + reshape
 
@@ -110,15 +111,15 @@ class DiT3D(nn.Module):
     """3-D Diffusion Transformer for latent velocity prediction.
 
     Args:
-        in_channels:  Input channels (noisy_target + conditioning latents).
-        out_channels: Output channels (velocity prediction = latent channels).
-        patch_size:   Spatial patch size (applied equally in D, H, W). Default 2.
-        hidden_size:  Transformer hidden dimension.
-        depth:        Number of DiTBlock layers.
-        num_heads:    Attention heads (hidden_size must be divisible by num_heads).
-        mlp_ratio:    FFN expansion ratio.
-        max_tokens:   Upper bound on token sequence length for pos-emb storage.
-                      Embeddings are interpolated when actual N exceeds this.
+        in_channels:     Input channels (noisy_target + conditioning latents).
+        out_channels:    Output channels (velocity prediction = latent channels).
+        patch_size:      Spatial patch size (applied equally in D, H, W). Default 2.
+        hidden_size:     Transformer hidden dimension.
+        depth:           Number of DiTBlock layers.
+        num_heads:       Attention heads (hidden_size must be divisible by num_heads).
+        mlp_ratio:       FFN expansion ratio.
+        max_spatial_dim: Stored size per axis for factorized pos embeddings.
+                         Interpolated at runtime for larger volumes.
     """
 
     def __init__(
@@ -130,12 +131,12 @@ class DiT3D(nn.Module):
         depth: int = 12,
         num_heads: int = 6,
         mlp_ratio: float = 4.0,
-        max_tokens: int = 8192,
+        max_spatial_dim: int = 64,
     ):
         super().__init__()
         assert hidden_size % num_heads == 0, "hidden_size must be divisible by num_heads"
 
-        self.patch_size  = patch_size
+        self.patch_size   = patch_size
         self.out_channels = out_channels
 
         # Patchify
@@ -152,10 +153,14 @@ class DiT3D(nn.Module):
             nn.Linear(hidden_size * 4, hidden_size),
         )
 
-        # Learnable positional embedding (interpolated for variable spatial size)
-        self.pos_embed = nn.Parameter(torch.zeros(1, max_tokens, hidden_size))
-        nn.init.normal_(self.pos_embed, std=0.02)
-        self._max_tokens = max_tokens
+        # Factorized per-axis positional embeddings — correct for any spatial shape.
+        # Each axis stores max_spatial_dim entries; 1D-interpolated at runtime.
+        self._max_sdim  = max_spatial_dim
+        self.pos_embed_d = nn.Parameter(torch.zeros(1, max_spatial_dim, hidden_size))
+        self.pos_embed_h = nn.Parameter(torch.zeros(1, max_spatial_dim, hidden_size))
+        self.pos_embed_w = nn.Parameter(torch.zeros(1, max_spatial_dim, hidden_size))
+        for emb in (self.pos_embed_d, self.pos_embed_h, self.pos_embed_w):
+            nn.init.normal_(emb, std=0.02)
 
         # Transformer
         self.blocks = nn.ModuleList([
@@ -169,18 +174,28 @@ class DiT3D(nn.Module):
         nn.init.zeros_(self.proj_out.bias)
 
     # ------------------------------------------------------------------
-    def _get_pos_embed(self, D: int, H: int, W: int) -> torch.Tensor:
-        """Return positional embedding for a D×H×W token grid, shape (1, N, C)."""
-        N = D * H * W
-        if N <= self._max_tokens:
-            return self.pos_embed[:, :N, :]
+    def _interp_1d(self, emb: torch.Tensor, size: int) -> torch.Tensor:
+        """1-D linear interpolation of a (1, S, C) embedding to length `size`."""
+        if emb.shape[1] == size:
+            return emb
+        return F.interpolate(
+            emb.permute(0, 2, 1).float(), size=size, mode="linear", align_corners=False
+        ).permute(0, 2, 1).to(emb.dtype)
 
-        # Interpolate stored embedding to the actual token grid
-        C = self.pos_embed.shape[-1]
-        stored = int(round(self._max_tokens ** (1 / 3)))
-        pe = self.pos_embed.reshape(1, stored, stored, stored, C).permute(0, 4, 1, 2, 3)
-        pe = F.interpolate(pe.float(), size=(D, H, W), mode="trilinear", align_corners=False)
-        return pe.permute(0, 2, 3, 4, 1).reshape(1, N, C).to(self.pos_embed.dtype)
+    def _get_pos_embed(self, D: int, H: int, W: int) -> torch.Tensor:
+        """Factorized positional embedding for a D×H×W token grid, shape (1, N, C).
+
+        Each axis embedding is independently 1-D interpolated then summed.
+        Works for any spatial size — no cube-root assumption required.
+        """
+        pe_d = self._interp_1d(self.pos_embed_d, D)   # (1, D, C)
+        pe_h = self._interp_1d(self.pos_embed_h, H)   # (1, H, C)
+        pe_w = self._interp_1d(self.pos_embed_w, W)   # (1, W, C)
+        # Broadcast-sum over D×H×W grid
+        pe = (pe_d.unsqueeze(2).unsqueeze(3) +         # (1, D, 1, 1, C)
+              pe_h.unsqueeze(1).unsqueeze(3) +         # (1, 1, H, 1, C)
+              pe_w.unsqueeze(1).unsqueeze(2))           # (1, 1, 1, W, C)
+        return pe.reshape(1, D * H * W, pe.shape[-1])  # (1, N, C)
 
     # ------------------------------------------------------------------
     def forward(self, x: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
