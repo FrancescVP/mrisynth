@@ -41,7 +41,28 @@ from monai.networks.schedulers import RFlowScheduler
 
 from .base_model import BaseModel
 from .dit import DiT3D
-from ..losses.velocity import build_velocity_loss, TumorWeightedL1Loss
+from ..losses.velocity import build_velocity_loss, SegAwareLoss
+
+
+def _ot_couple(noise: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Permute a batch of noise samples to minimise total L2 cost to targets (mini-batch OT).
+
+    Straight-line paths from noise to data are shorter on average, which lets the
+    flow network learn with fewer integration steps at inference time.
+
+    For B == 1 the function is a no-op (no pairing to do).
+    Uses scipy.optimize.linear_sum_assignment (already a project dependency).
+    """
+    B = noise.shape[0]
+    if B < 2:
+        return noise
+    from scipy.optimize import linear_sum_assignment
+    n = noise.detach().float().flatten(1).cpu().numpy()   # (B, N)
+    t = target.detach().float().flatten(1).cpu().numpy()  # (B, N)
+    # ||t_i - n_j||^2 = ||t_i||^2 + ||n_j||^2 - 2 * (t @ n.T)  — memory-efficient
+    cost = (t * t).sum(1, keepdims=True) + (n * n).sum(1, keepdims=True).T - 2.0 * (t @ n.T)
+    _, col_ind = linear_sum_assignment(cost)   # col_ind[i] = best noise index for target i
+    return noise[col_ind]
 
 
 def _pad(x: torch.Tensor, factor: int) -> tuple[torch.Tensor, tuple[int, int, int]]:
@@ -195,12 +216,24 @@ class RFlowModel(BaseModel):
         )
         parser.add_argument(
             "--velocity_loss", type=str, default="l1",
-            choices=["l1", "l2", "ssim", "ncc", "l1+ssim"],
+            choices=["l1", "l2", "ssim", "ncc", "l1+ssim", "tumor_l1", "et_l1", "l1+contrastive"],
             help="Velocity loss. ncc/ssim are robust to cross-scanner intensity shifts.",
         )
         parser.add_argument(
             "--loss_alpha", type=float, default=0.5,
             help="Blend weight for l1+ssim (alpha*L1 + (1-alpha)*SSIM).",
+        )
+        parser.add_argument(
+            "--contrastive_weight", type=float, default=0.1,
+            help="[l1+contrastive] Weight λ for the ET contrastive term.",
+        )
+        parser.add_argument(
+            "--contrastive_temp", type=float, default=0.1,
+            help="[l1+contrastive] InfoNCE temperature.",
+        )
+        parser.add_argument(
+            "--use_ot_coupling", action="store_true",
+            help="Use mini-batch OT to couple noise to targets (OT-FM). Requires scipy.",
         )
         parser.add_argument(
             "--ema_decay", type=float, default=0.0,
@@ -254,18 +287,22 @@ class RFlowModel(BaseModel):
             use_discrete_timesteps=True,
         )
 
-        self._lat_ch    = lat_ch
-        self._n_inf     = getattr(opt, "n_inference_steps", 200)
-        self._use_ckpt  = getattr(opt, "use_checkpointing", True)
-        self._ema_decay = getattr(opt, "ema_decay", 0.0)
-        self._grad_clip = getattr(opt, "grad_clip", 0.0)
+        self._lat_ch         = lat_ch
+        self._n_inf          = getattr(opt, "n_inference_steps", 200)
+        self._use_ckpt       = getattr(opt, "use_checkpointing", True)
+        self._ema_decay      = getattr(opt, "ema_decay", 0.0)
+        self._grad_clip      = getattr(opt, "grad_clip", 0.0)
+        self._use_ot_coupling = getattr(opt, "use_ot_coupling", False)
         self._ema_weights: dict | None = None
 
         if self.isTrain:
             vel_loss = getattr(opt, "velocity_loss", "l1")
-            loss_alpha = getattr(opt, "loss_alpha", 0.5)
+            loss_kwargs = {
+                "alpha":              getattr(opt, "loss_alpha", 0.5),
+                "contrastive_weight": getattr(opt, "contrastive_weight", 0.1),
+                "contrastive_temp":   getattr(opt, "contrastive_temp", 0.1),
+            }
             tumor_weight = getattr(opt, "tumor_weight", None)
-            loss_kwargs = {"alpha": loss_alpha}
             if tumor_weight is not None:
                 loss_kwargs["tumor_weight"] = tumor_weight
             self.criterion = build_velocity_loss(vel_loss, **loss_kwargs)
@@ -341,7 +378,9 @@ class RFlowModel(BaseModel):
         t = torch.randint(
             0, self.scheduler.num_train_timesteps, (B,), device=self.device
         )
-        noise     = torch.randn_like(self.latent_tgt)
+        noise = torch.randn_like(self.latent_tgt)
+        if self._use_ot_coupling:
+            noise = _ot_couple(noise, self.latent_tgt)
         noisy_tgt = self.scheduler.add_noise(self.latent_tgt, noise, t)
         target_v  = self.latent_tgt - noise           # RFlow velocity target
 
@@ -359,7 +398,7 @@ class RFlowModel(BaseModel):
                 v_padded = self._backbone(x_in, timesteps=t)
             v_pred = _unpad(v_padded, orig)
             seg = getattr(self, "seg", None)
-            if isinstance(self.criterion, TumorWeightedL1Loss):
+            if isinstance(self.criterion, SegAwareLoss):
                 self.loss_rflow = self.criterion(v_pred, target_v, seg)
             else:
                 self.loss_rflow = self.criterion(v_pred, target_v)

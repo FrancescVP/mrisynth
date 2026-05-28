@@ -9,10 +9,13 @@ from .tumor_ssim import (
     tumor_ssim_loss,
 )
 from .velocity import (
+    SegAwareLoss,
     NCCLoss,
     SSIMLoss,
     L1SSIMLoss,
     TumorWeightedL1Loss,
+    RegionContrastiveLoss,
+    L1RegionContrastiveLoss,
     build_velocity_loss,
 )
 
@@ -28,9 +31,12 @@ __all__ = [
     "TumorAwareGANLoss",
     "make_default_et_aware_loss",
     # RFlow velocity losses.
+    "SegAwareLoss",
     "NCCLoss",
     "SSIMLoss",
     "L1SSIMLoss",
     "TumorWeightedL1Loss",
+    "RegionContrastiveLoss",
+    "L1RegionContrastiveLoss",
     "build_velocity_loss",
 ]

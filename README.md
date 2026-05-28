@@ -355,8 +355,22 @@ Expected (900 cases, 300 ep): SSIM ≈ 0.765, MAE ≈ 0.063.
 # Tumor-weighted velocity loss (requires seg files alongside latents)
 --velocity_loss tumor_l1 --tumor_weight 5.0
 
+# Region-specific contrastive loss — MAISI-v2 style (requires seg files)
+# Adds InfoNCE term pulling predicted ET velocity toward target ET,
+# away from background. Improves ET-region fidelity without changing the backbone.
+--velocity_loss l1+contrastive --contrastive_weight 0.1 --contrastive_temp 0.1
+
+# OT-FM: mini-batch optimal transport noise coupling
+# Permutes noise samples within each batch to minimise total L2 cost to targets,
+# shortening flow paths and allowing fewer inference steps at convergence.
+# No-op for batch_size=1; effect grows with larger batches.
+--use_ot_coupling
+
 # EMA weights for inference (marginal improvement)
 --ema_decay 0.9999
+
+# Gradient clipping (recommended for DiT backbone)
+--grad_clip 1.0
 
 # Lightweight alternative: rflow_tiny at 19 M params
 --unet_channels 32 64 128 128
@@ -438,7 +452,7 @@ loss = criterion(v_pred, v_target)
 uv run pytest -q
 ```
 
-157 tests covering preprocessing, augmentation, losses, metrics, datasets, networks, and models.
+187 tests covering preprocessing, augmentation, losses, metrics, datasets, networks, and models.
 
 <details>
 <summary><strong>Test suite breakdown</strong> — per-file tables of what each group tests, plus module coverage map</summary>
@@ -492,32 +506,38 @@ Channel resolution, `Pix2Pix3dDataset`, and `LatentDataset`.
 
 ---
 
-### `test_models.py` — 12 tests
+### `test_models.py` — 18 tests
 
-`_pad`/`_unpad`, `_build_unet`, and `RFlowModel` smoke tests.
+`_pad`/`_unpad`, `_ot_couple`, `_build_unet`, `_build_dit`, and `RFlowModel` smoke tests.
 
 | Group | What is checked |
 |---|---|
 | `_pad` / `_unpad` | Roundtrip identity for even and odd spatial dims; padded dims divisible by factor; no-op when already aligned |
+| `_ot_couple` | No-op for B=1; shape preserved; output is a permutation of input; coupled L2 cost ≤ uncoupled cost |
 | `_build_unet` | Forward output shape; multiple attention levels; single attention level |
 | `RFlowModel` (CPU) | `set_input` stores tensors; `optimize_parameters` produces finite loss; `model_names`; `get_current_losses` returns float |
+| OT-FM | `use_ot_coupling=True` with B=2 produces finite loss |
+| Contrastive | `l1+contrastive` with seg tensor produces finite loss |
 | EMA | Weights initialized when `ema_decay > 0`; weights update after a training step |
 
 ---
 
 ### `test_losses/` — 39 tests across 3 files
 
-#### `test_velocity_losses.py` — 22 tests
+#### `test_velocity_losses.py` — 34 tests
 
 Velocity-space losses for RFlow.
 
 | Class | What is checked |
 |---|---|
+| `SegAwareLoss` | `TumorWeightedL1Loss`, `RegionContrastiveLoss`, `L1RegionContrastiveLoss` all inherit it |
 | `NCCLoss` | Range [0, 2]; perfect match ≈ 0; linear invariance (a·x+b); gradient flow |
 | `SSIMLoss` | Perfect match ≈ 0; range [0, 2]; low noise < high noise; gradient flow |
 | `L1SSIMLoss` | α=1 equals L1; α=0 equals SSIM; α=0.5 exact blend; invalid α raises |
 | `TumorWeightedL1Loss` | No seg equals L1; perfect match = 0; error inside tumor → weighted > plain; gradient flow |
-| `build_velocity_loss` | All names return `nn.Module`; "l1" is `nn.L1Loss`; "l2" is `nn.MSELoss`; unknown raises; l1 result matches `nn.L1Loss` |
+| `RegionContrastiveLoss` | No seg → zero; correct ET prediction has lower loss than wrong; finite output; empty ET mask → zero; gradient flow |
+| `L1RegionContrastiveLoss` | No seg equals L1; with seg ≥ L1; gradient flow with seg |
+| `build_velocity_loss` | All names (incl. `l1+contrastive`) return `nn.Module`; "l1" is `nn.L1Loss`; "l2" is `nn.MSELoss`; unknown raises |
 
 #### `test_composite.py` — 8 tests
 
@@ -578,6 +598,8 @@ Not covered by unit tests (require GPU + VAE checkpoint): `model/pix2pix3d.py`, 
 | **λ_feat=0 collapses D (pix2pix)** | D_real → 0.002 at bs=1 without feature matching — always keep it |
 | **LSGAN > vanilla GAN** | Vanilla is unstable at bs=1 (D_real 0.289 vs 0.016 for LSGAN) |
 | **SSIM data-range note** | Use `max_value = gt.max() − gt.min()` for Z-score data, not 1.0 |
+| **OT-FM** (`--use_ot_coupling`) | Mini-batch OT couples noise to targets for shorter flow paths; allows fewer inference steps. Not yet benchmarked on this dataset. |
+| **Region contrastive loss** (`--velocity_loss l1+contrastive`) | InfoNCE term pulls ET-region velocity prediction toward GT, away from BG. Not yet benchmarked on this dataset. |
 
 ---
 

@@ -192,12 +192,18 @@ def parse_args() -> argparse.Namespace:
     g.add_argument("--n_inference_steps", type=int, default=200,
                    help="Denoising steps during validation.")
     g.add_argument("--velocity_loss", default="l1",
-                   choices=["l1", "l2", "ssim", "ncc", "l1+ssim", "tumor_l1", "et_l1"],
+                   choices=["l1", "l2", "ssim", "ncc", "l1+ssim", "tumor_l1", "et_l1", "l1+contrastive"],
                    help="Velocity loss function.")
     g.add_argument("--loss_alpha", type=float, default=0.5,
                    help="Blend weight for l1+ssim (alpha*L1 + (1-alpha)*SSIM).")
     g.add_argument("--tumor_weight", type=float, default=None,
                    help="Spatial weight multiplier inside tumour for tumor_l1/et_l1.")
+    g.add_argument("--contrastive_weight", type=float, default=0.1,
+                   help="[l1+contrastive] Weight λ for the ET contrastive term.")
+    g.add_argument("--contrastive_temp", type=float, default=0.1,
+                   help="[l1+contrastive] InfoNCE temperature.")
+    g.add_argument("--use_ot_coupling", action="store_true",
+                   help="Use mini-batch OT noise coupling (OT-FM) for shorter flow paths.")
 
     g = p.add_argument_group("optimiser")
     g.add_argument("--lr",             type=float, default=1e-4)
@@ -288,11 +294,14 @@ def _build_opt(args: argparse.Namespace, n_cond: int) -> SimpleNamespace:
         dit_num_heads     = args.dit_num_heads,
         n_timesteps       = args.n_timesteps,
         n_inference_steps  = args.n_inference_steps,
-        velocity_loss     = args.velocity_loss,
-        loss_alpha        = args.loss_alpha,
-        tumor_weight      = args.tumor_weight,
-        ema_decay         = args.ema_decay,
-        grad_clip         = args.grad_clip,
+        velocity_loss       = args.velocity_loss,
+        loss_alpha          = args.loss_alpha,
+        tumor_weight        = args.tumor_weight,
+        contrastive_weight  = args.contrastive_weight,
+        contrastive_temp    = args.contrastive_temp,
+        use_ot_coupling     = args.use_ot_coupling,
+        ema_decay           = args.ema_decay,
+        grad_clip           = args.grad_clip,
     )
 
 

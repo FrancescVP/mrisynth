@@ -6,10 +6,13 @@ import torch
 import torch.nn as nn
 
 from mrisynth.losses import (
+    SegAwareLoss,
     L1SSIMLoss,
     NCCLoss,
     SSIMLoss,
     TumorWeightedL1Loss,
+    RegionContrastiveLoss,
+    L1RegionContrastiveLoss,
     build_velocity_loss,
 )
 
@@ -168,10 +171,113 @@ def test_tumor_weighted_gradient_flows():
 
 
 # ---------------------------------------------------------------------------
+# SegAwareLoss base class
+# ---------------------------------------------------------------------------
+
+def test_tumor_weighted_is_seg_aware():
+    assert isinstance(TumorWeightedL1Loss(), SegAwareLoss)
+
+
+def test_region_contrastive_is_seg_aware():
+    assert isinstance(RegionContrastiveLoss(), SegAwareLoss)
+
+
+def test_l1_region_contrastive_is_seg_aware():
+    assert isinstance(L1RegionContrastiveLoss(), SegAwareLoss)
+
+
+# ---------------------------------------------------------------------------
+# RegionContrastiveLoss
+# ---------------------------------------------------------------------------
+
+def _et_seg(B=1, D=16, H=16, W=16):
+    seg = torch.zeros(B, D, H, W, dtype=torch.int64)
+    seg[:, 4:12, 4:12, 4:12] = 3   # ET region
+    return seg
+
+
+def test_region_contrastive_no_seg_returns_zero():
+    pred, target = _vel()
+    loss = RegionContrastiveLoss()(pred, target, seg=None)
+    assert loss.item() == pytest.approx(0.0, abs=1e-6)
+
+
+def test_region_contrastive_correct_vs_wrong():
+    """Correct ET prediction has lower loss than an inverted (wrong) ET prediction.
+
+    We need ET and BG to have clearly different velocity directions — random
+    uniform data gives near-identical pooled vectors, making the test ambiguous.
+    """
+    C, D, H, W = 4, 16, 16, 16
+    seg = _et_seg()
+
+    # Target: ET region has opposite direction to BG
+    target = torch.ones(1, C, D, H, W) * -1.0   # BG: all -1
+    target[:, :, 4:12, 4:12, 4:12] = 1.0        # ET: all +1
+
+    pred_correct = target.clone()                # ET prediction matches ET target
+    pred_wrong   = target.clone()
+    pred_wrong[:, :, 4:12, 4:12, 4:12] = -1.0  # ET prediction matches BG (wrong)
+
+    loss_correct = RegionContrastiveLoss()(pred_correct, target, seg)
+    loss_wrong   = RegionContrastiveLoss()(pred_wrong,   target, seg)
+    assert loss_correct.item() < loss_wrong.item()
+
+
+def test_region_contrastive_finite():
+    pred, target = _vel()
+    seg = _et_seg()
+    loss = RegionContrastiveLoss()(pred, target, seg)
+    assert torch.isfinite(loss)
+
+
+def test_region_contrastive_gradient_flows():
+    pred, target = _vel()
+    seg = _et_seg()
+    pred = pred.requires_grad_(True)
+    RegionContrastiveLoss()(pred, target, seg).backward()
+    assert pred.grad is not None
+    assert torch.isfinite(pred.grad).all()
+
+
+def test_region_contrastive_empty_et_returns_zero():
+    """When the ET mask is empty the loss must be zero (no valid region)."""
+    pred, target = _vel()
+    seg = torch.zeros(1, 16, 16, 16, dtype=torch.int64)  # no ET
+    loss = RegionContrastiveLoss()(pred, target, seg)
+    assert loss.item() == pytest.approx(0.0, abs=1e-6)
+
+
+def test_l1_contrastive_no_seg_equals_l1():
+    pred, target = _vel()
+    expected = nn.L1Loss()(pred, target).item()
+    actual = L1RegionContrastiveLoss()(pred, target, seg=None).item()
+    assert actual == pytest.approx(expected, rel=1e-5)
+
+
+def test_l1_contrastive_with_seg_larger_than_l1():
+    """When there is an ET region the contrastive term adds a positive cost."""
+    pred, target = _vel()
+    seg = _et_seg()
+    l1_only = nn.L1Loss()(pred, target).item()
+    combined = L1RegionContrastiveLoss(contrastive_weight=1.0)(pred, target, seg).item()
+    assert combined >= l1_only
+
+
+def test_l1_contrastive_gradient_flows():
+    pred, target = _vel()
+    seg = _et_seg()
+    pred = pred.requires_grad_(True)
+    L1RegionContrastiveLoss(contrastive_weight=0.5)(pred, target, seg).backward()
+    assert pred.grad is not None
+    assert torch.isfinite(pred.grad).all()
+
+
+# ---------------------------------------------------------------------------
 # build_velocity_loss factory
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name", ["l1", "l2", "ssim", "ncc", "l1+ssim", "tumor_l1", "et_l1"])
+@pytest.mark.parametrize("name", ["l1", "l2", "ssim", "ncc", "l1+ssim", "tumor_l1", "et_l1", "l1+contrastive"])
 def test_factory_returns_module(name):
     loss_fn = build_velocity_loss(name)
     assert isinstance(loss_fn, nn.Module)

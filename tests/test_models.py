@@ -9,7 +9,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from mrisynth.model.rflow import _pad, _unpad, _build_unet, _build_dit
+from mrisynth.model.rflow import _pad, _unpad, _build_unet, _build_dit, _ot_couple
 from mrisynth.model.dit import DiT3D
 
 
@@ -20,7 +20,8 @@ from mrisynth.model.dit import DiT3D
 def _rflow_opt(tmp_path, isTrain=True, channels=(32, 64), n_cond=1,
                velocity_loss="l1", ema_decay=0.0, n_attention_levels=1,
                num_res_blocks=1, backbone="unet",
-               dit_patch_size=2, dit_hidden_size=64, dit_depth=2, dit_num_heads=4):
+               dit_patch_size=2, dit_hidden_size=64, dit_depth=2, dit_num_heads=4,
+               use_ot_coupling=False, contrastive_weight=0.1, contrastive_temp=0.1):
     return types.SimpleNamespace(
         isTrain=isTrain,
         checkpoints_dir=str(tmp_path),
@@ -62,7 +63,51 @@ def _rflow_opt(tmp_path, isTrain=True, channels=(32, 64), n_cond=1,
         tumor_weight=None,
         ema_decay=ema_decay,
         use_checkpointing=False,
+        use_ot_coupling=use_ot_coupling,
+        contrastive_weight=contrastive_weight,
+        contrastive_temp=contrastive_temp,
     )
+
+
+# ---------------------------------------------------------------------------
+# _ot_couple
+# ---------------------------------------------------------------------------
+
+def test_ot_couple_noop_for_b1():
+    noise  = torch.randn(1, 4, 8, 8, 8)
+    target = torch.randn(1, 4, 8, 8, 8)
+    coupled = _ot_couple(noise, target)
+    assert torch.equal(coupled, noise)
+
+
+def test_ot_couple_preserves_shape():
+    noise  = torch.randn(3, 4, 8, 8, 8)
+    target = torch.randn(3, 4, 8, 8, 8)
+    coupled = _ot_couple(noise, target)
+    assert coupled.shape == noise.shape
+
+
+def test_ot_couple_is_permutation():
+    """Coupled output must be a permutation of the input rows (no new values)."""
+    noise  = torch.randn(4, 4, 8, 8, 8)
+    target = torch.randn(4, 4, 8, 8, 8)
+    coupled = _ot_couple(noise, target)
+    # Every row of coupled must exist in noise
+    for i in range(coupled.shape[0]):
+        assert any(torch.equal(coupled[i], noise[j]) for j in range(noise.shape[0]))
+
+
+def test_ot_couple_cost_le_uncoupled():
+    """OT-coupled total L2 cost must be ≤ identity pairing cost."""
+    torch.manual_seed(0)
+    noise  = torch.randn(4, 4, 4, 4, 4)
+    target = torch.randn(4, 4, 4, 4, 4)
+    coupled = _ot_couple(noise, target)
+
+    def total_cost(n, t):
+        return ((n.flatten(1) - t.flatten(1)) ** 2).sum().item()
+
+    assert total_cost(coupled, target) <= total_cost(noise, target) + 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +227,44 @@ class TestRFlowModel:
 # ---------------------------------------------------------------------------
 # RFlowModel with EMA enabled
 # ---------------------------------------------------------------------------
+
+def test_rflow_ot_coupling_loss_finite(tmp_path):
+    """OT coupling must produce a finite loss for batch size > 1."""
+    from mrisynth.model.rflow import RFlowModel
+    opt = _rflow_opt(tmp_path, use_ot_coupling=True)
+    model = RFlowModel(opt)
+    model.netUNet = model.netUNet.cpu().float()
+    batch = {
+        "latent_tgt":  torch.randn(2, 4, 8, 8, 8),
+        "latent_cond": torch.randn(2, 4, 8, 8, 8),
+        "mu_tgt":      torch.randn(2, 4, 8, 8, 8),
+        "case_id":     ["case0000", "case0001"],
+        "seg":         None,
+    }
+    model.set_input(batch)
+    model.optimize_parameters()
+    assert torch.isfinite(model.loss_rflow)
+
+
+def test_rflow_contrastive_loss_finite(tmp_path):
+    """l1+contrastive loss must produce a finite result when seg is provided."""
+    from mrisynth.model.rflow import RFlowModel
+    opt = _rflow_opt(tmp_path, velocity_loss="l1+contrastive", contrastive_weight=0.1)
+    model = RFlowModel(opt)
+    model.netUNet = model.netUNet.cpu().float()
+    seg = torch.zeros(1, 8, 8, 8, dtype=torch.long)
+    seg[:, 2:6, 2:6, 2:6] = 3  # ET region
+    batch = {
+        "latent_tgt":  torch.randn(1, 4, 8, 8, 8),
+        "latent_cond": torch.randn(1, 4, 8, 8, 8),
+        "mu_tgt":      torch.randn(1, 4, 8, 8, 8),
+        "case_id":     ["case0000"],
+        "seg":         seg,
+    }
+    model.set_input(batch)
+    model.optimize_parameters()
+    assert torch.isfinite(model.loss_rflow)
+
 
 def test_rflow_ema_weights_initialized(tmp_path):
     from mrisynth.model.rflow import RFlowModel
