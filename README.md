@@ -251,7 +251,8 @@ tests/
 ├── test_composite.py         #  8 tests — TumorAwareGANLoss
 ├── test_enhancing_tumor.py   # 10 tests — ET metrics + EnhancingTumorLoss
 ├── test_tumor_ssim.py        #  8 tests — TumorSSIMLoss, RegionWeightedSSIMLoss
-└── test_metrics.py           #  8 tests — MAE, MSE, NMSE, PSNR, SSIM
+├── test_metrics.py           #  8 tests — MAE, MSE, NMSE, PSNR, SSIM
+└── test_modality_dropout.py  #  8 tests — modality dropout (both datasets)
 ```
 
 ---
@@ -296,6 +297,30 @@ uv run gan-preprocess \
     --normalization zscore_nonzero \
     --num-workers 8
 ```
+
+---
+
+## Training options
+
+### Missing-modality robustness — `--modality_dropout`
+
+All training scripts accept `--modality_dropout P` (default `0.0`). With
+probability `P`, each **training** sample has exactly one input modality
+zeroed (chosen uniformly), so the model degrades gracefully when an input
+sequence is missing at inference. Requires more than one input modality.
+Validation/inference are never affected.
+
+```bash
+# e.g. 30% of training samples drop either T1n or T2FLAIR
+uv run python scripts/train_rflow.py --task t1n_t2f_to_t1c \
+    --latent_root latents/dataset --name rflow_mdrop --modality_dropout 0.3
+```
+
+Supported by all six approaches via the two shared datasets:
+`Pix2Pix3dDataset` (pix2pix, WFM, cWDM — zeros one input channel) and
+`LatentDataset` (RFlow, DiT, ControlNet — zeros one conditioning latent
+block). To predict with a missing modality, feed zeros in that modality's
+input slot at inference (matches the training convention).
 
 ---
 
@@ -760,7 +785,7 @@ loss = criterion(v_pred, v_target)
 uv run pytest -q
 ```
 
-213 tests covering preprocessing, augmentation, losses, metrics, datasets, networks, and models.
+221 tests covering preprocessing, augmentation, losses, metrics, datasets, networks, models, and modality dropout.
 
 <details>
 <summary><strong>Test suite breakdown</strong> — per-file tables of what each group tests, plus module coverage map</summary>
@@ -811,6 +836,17 @@ Channel resolution, `Pix2Pix3dDataset`, and `LatentDataset`.
 | `resolve_channels` | Int indices; name strings; aliases (t1c, flair, t2); mixed; unknown name raises; out-of-range int raises; wrong type raises |
 | `Pix2Pix3dDataset` | Length; `patches_per_volume` multiplier; A/B shapes; multi-input channels; seg shape; A_paths key; patch cropping; float32 dtype |
 | `LatentDataset` | Length; latent shape; cond channel count; seg=None when absent; seg loaded when present; deterministic=True produces identical samples; case_id key; custom target key; empty root raises |
+
+---
+
+### `test_modality_dropout.py` — 8 tests
+
+Modality dropout in both training datasets (fake data on disk).
+
+| Group | What is checked |
+|---|---|
+| `Pix2Pix3dDataset` | Exactly one input channel zeroed; both channels get dropped over draws; rate respected (~0.5 over 400 draws); fires with `augment=False` (WFM/cWDM path); `modality_dropout=0` disables |
+| `LatentDataset` | Exactly one conditioning latent block zeroed; both blocks get dropped over draws; no-op when `deterministic=True`; `modality_dropout=0` disables |
 
 ---
 
@@ -908,8 +944,8 @@ WFMModel, cWDMModel, and RFlowControlNetModel CPU smoke tests.
 | `losses/tumor_ssim.py` | `test_tumor_ssim.py` |
 | `metrics/` | `test_metrics.py`, `test_enhancing_tumor.py` |
 | `model/networks.py` | `test_networks.py` |
-| `model/dataset.py` | `test_dataset.py` |
-| `model/latent_dataset.py` | `test_dataset.py` |
+| `model/dataset.py` | `test_dataset.py`, `test_modality_dropout.py` |
+| `model/latent_dataset.py` | `test_dataset.py`, `test_modality_dropout.py` |
 | `model/rflow.py` | `test_models.py` |
 | `model/wavelet.py` | `test_wavelet.py` |
 | `model/wfm.py` | `test_wfm_cwdm.py` |

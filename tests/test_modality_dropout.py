@@ -66,7 +66,24 @@ def test_pix2pix_dropout_zero_rate_disables(tmp_path):
         assert sum(_channel_is_zero(A)) == 0
 
 
-def test_pix2pix_dropout_off_in_val(tmp_path):
+def test_pix2pix_dropout_independent_of_augment(tmp_path):
+    """Dropout must work with augment=False — WFM/cWDM train that way."""
+    _make_npz_dataset(tmp_path)
+    ds = Pix2Pix3dDataset(
+        root=tmp_path,
+        input_channels=["T1n", "T2FLAIR"],
+        target_channels=["T1CE"],
+        patch_size=None,
+        augment=False,           # wavelet-model train mode
+        modality_dropout=1.0,
+    )
+    for _ in range(10):
+        A = ds[0]["A"]
+        assert sum(_channel_is_zero(A)) == 1
+
+
+def test_pix2pix_dropout_off_when_val_passes_zero(tmp_path):
+    """Val safety is the caller's contract: val datasets pass modality_dropout=0."""
     _make_npz_dataset(tmp_path)
     ds = Pix2Pix3dDataset(
         root=tmp_path,
@@ -74,7 +91,7 @@ def test_pix2pix_dropout_off_in_val(tmp_path):
         target_channels=["T1CE"],
         patch_size=None,
         augment=False,           # val/inference mode
-        modality_dropout=1.0,    # should be ignored
+        modality_dropout=0.0,    # caller passes 0 for val
     )
     for _ in range(10):
         A = ds[0]["A"]
