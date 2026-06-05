@@ -222,6 +222,10 @@ def parse_args() -> argparse.Namespace:
                    metavar=("D", "H", "W"), help="Training patch size.")
     g.add_argument("--patches_per_volume", type=int, default=4,
                    help="Random crops drawn per volume per epoch.")
+    g.add_argument("--modality_dropout", type=float, default=0.0,
+                   help="Fraction of TRAIN samples with one input modality "
+                        "zeroed (robustness to a missing sequence). Needs >1 "
+                        "input channel; 0 disables. Val/inference unaffected.")
     g.add_argument("--val_fraction", type=float, default=0.1,
                    help="Fraction of cases held out for validation.")
 
@@ -331,6 +335,7 @@ def make_datasets(args: argparse.Namespace):
         patch_size=tuple(args.patch_size),
         augment=True,
         patches_per_volume=args.patches_per_volume,
+        modality_dropout=args.modality_dropout,
         case_ids=train_cases,
     )
     val_ds = Pix2Pix3dDataset(

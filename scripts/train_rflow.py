@@ -162,6 +162,11 @@ def parse_args() -> argparse.Namespace:
                    help="Modality keys for conditioning inputs (overridden by --task).")
     g.add_argument("--n_cond", type=int, default=2,
                    help="Number of conditioning modalities (overridden by --task).")
+    g.add_argument("--modality_dropout", type=float, default=0.0,
+                   help="Fraction of TRAIN samples with one conditioning "
+                        "modality zeroed (robustness to a missing sequence). "
+                        "Needs >1 conditioning modality; 0 disables. Validation "
+                        "is deterministic and never affected.")
 
     g = p.add_argument_group("model")
     g.add_argument("--backbone", default="unet", choices=["unet", "dit"],
@@ -329,7 +334,8 @@ def main():
             out[k] = None if vals[0] is None else default_collate(vals)
         return out
 
-    train_ds = LatentDataset(train_dir, target_key=target_key, cond_keys=cond_keys)
+    train_ds = LatentDataset(train_dir, target_key=target_key, cond_keys=cond_keys,
+                             modality_dropout=args.modality_dropout)
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
         num_workers=args.num_workers, pin_memory=True,

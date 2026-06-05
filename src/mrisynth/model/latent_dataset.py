@@ -28,6 +28,7 @@ Returned dict keys
 """
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
@@ -45,6 +46,11 @@ class LatentDataset(Dataset):
             Use this for validation to get reproducible metrics.
         target_key: modality key for the synthesis target (e.g. "t1c", "t2w", "t2f").
         cond_keys: modality keys for conditioning inputs, concatenated in order.
+        modality_dropout: fraction of samples in which exactly one conditioning
+            modality is zeroed (chosen uniformly at random), to train robustness
+            to a missing input sequence. Requires >1 conditioning modality.
+            Disabled (no-op) when ``deterministic=True`` so validation/inference
+            always see the full input. ``0.0`` disables it entirely.
     """
 
     def __init__(
@@ -54,11 +60,13 @@ class LatentDataset(Dataset):
         deterministic: bool = False,
         target_key: str = "t1c",
         cond_keys: Optional[Sequence[str]] = None,
+        modality_dropout: float = 0.0,
     ):
         self.root = Path(root)
         self.deterministic = deterministic
         self.target_key = target_key
         self.cond_keys = list(cond_keys) if cond_keys is not None else ["t1n", "t2f"]
+        self.modality_dropout = float(modality_dropout)
 
         if case_ids is None:
             case_ids = sorted(
@@ -96,6 +104,16 @@ class LatentDataset(Dataset):
             torch.load(d / f"{cid}-{k}_z_mu.pt", map_location="cpu", weights_only=True)
             for k in self.cond_keys
         ]
+        # Modality dropout (train only): with prob `modality_dropout`, zero one
+        # conditioning modality so the model learns to cope with a missing input.
+        if (
+            not self.deterministic
+            and self.modality_dropout > 0.0
+            and len(cond_parts) > 1
+            and random.random() < self.modality_dropout
+        ):
+            drop = random.randrange(len(cond_parts))
+            cond_parts[drop] = torch.zeros_like(cond_parts[drop])
         latent_cond = torch.cat(cond_parts, dim=0)  # (4 * n_cond, D', H', W')
 
         return {
