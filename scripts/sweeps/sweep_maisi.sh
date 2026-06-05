@@ -9,7 +9,7 @@
 set -euo pipefail
 
 DEVICE="${DEVICE:-cuda:0}"
-LATENT_ROOT="${LATENT_ROOT:-/path/to/latents}"
+LATENT_ROOT="${LATENT_ROOT:-/home/fran/Projects/mrisynth/latents/dataset500}"
 VAE_CKPT="${VAE_CKPT:-pretrained/autoencoder_epoch273.pt}"
 CKPT_DIR="${CKPT_DIR:-./checkpoints}"
 LOG_DIR="${LOG_DIR:-./runs}"

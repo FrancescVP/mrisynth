@@ -9,7 +9,7 @@
 set -euo pipefail
 
 DEVICE="${DEVICE:-cuda:0}"
-DATA_DIR="${DATA_DIR:-/path/to/preprocessed}"
+DATA_DIR="${DATA_DIR:-/home/fran/DATA/Dataset015_GeneralBrainTumor_preprocessed_500}"
 CKPT_DIR="${CKPT_DIR:-./checkpoints}"
 LOG_DIR="${LOG_DIR:-./runs}"
 
@@ -18,16 +18,18 @@ N_EPOCHS=300
 N_EPOCHS_DECAY=100
 
 BASE="uv run python scripts/train_cwdm.py
-  --task              $TASK
-  --data_dir          $DATA_DIR
-  --n_timesteps       1000
-  --n_ddim_steps      50
-  --beta_schedule     linear
-  --n_epochs          $N_EPOCHS
-  --n_epochs_decay    $N_EPOCHS_DECAY
-  --checkpoints_dir   $CKPT_DIR
-  --log_dir           $LOG_DIR
-  --device            $DEVICE"
+  --task                $TASK
+  --data_dir            $DATA_DIR
+  --patch_size          64 64 64
+  --patches_per_volume  4
+  --n_timesteps         1000
+  --n_ddim_steps        50
+  --beta_schedule       linear
+  --n_epochs            $N_EPOCHS
+  --n_epochs_decay      $N_EPOCHS_DECAY
+  --checkpoints_dir     $CKPT_DIR
+  --log_dir             $LOG_DIR
+  --device              $DEVICE"
 
 echo "======================================================================"
 echo " sweep_cwdm.sh — 7 experiments"

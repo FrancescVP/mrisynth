@@ -73,13 +73,21 @@ def parse_args():
     p.add_argument("--latent_dir",    required=True, help="Val latent directory.")
     p.add_argument("--data_dir",      default=None,  help="Preprocessed .npz/.json dir (for affines).")
     p.add_argument("--vae_ckpt",      required=True, help="MAISI VAE checkpoint.")
-    p.add_argument("--checkpoint",    required=True, help="RFlow UNet checkpoint (.pth).")
+    p.add_argument("--checkpoint",    required=True, help="RFlow checkpoint (.pth).")
     p.add_argument("--out_dir",       default="predictions/rflow")
-    p.add_argument("--unet_channels",     nargs="+", type=int, default=[32, 64, 128, 128])
-    p.add_argument("--num_res_blocks",    type=int, default=2)
-    p.add_argument("--n_attention_levels",type=int, default=2)
-    p.add_argument("--n_cases",           type=int, default=5, help="Number of val cases to run.")
-    p.add_argument("--n_inference_steps", type=int, default=200)
+    # UNet args
+    p.add_argument("--unet_channels",      nargs="+", type=int, default=[64, 128, 256, 256])
+    p.add_argument("--num_res_blocks",     type=int, default=2)
+    p.add_argument("--n_attention_levels", type=int, default=2)
+    # DiT args
+    p.add_argument("--backbone",           default="unet", choices=["unet", "dit"])
+    p.add_argument("--dit_hidden_size",    type=int, default=384)
+    p.add_argument("--dit_depth",          type=int, default=12)
+    p.add_argument("--dit_num_heads",      type=int, default=6)
+    p.add_argument("--dit_patch_size",     type=int, default=2)
+    # Shared
+    p.add_argument("--n_cases",            type=int, default=5)
+    p.add_argument("--n_inference_steps",  type=int, default=200)
     p.add_argument("--device",        default="cuda:0")
     p.add_argument("--save_gt",       action="store_true", help="Also save GT T1CE decoded from mu_tgt.")
     return p.parse_args()
@@ -108,19 +116,25 @@ def main():
         init_gain=0.02,
         norm="instance",
         latent_channels=4,
+        n_cond=2,
+        backbone=args.backbone,
         unet_channels=args.unet_channels,
-        n_timesteps=1000,
-        n_inference_steps=args.n_inference_steps,
         num_res_blocks=args.num_res_blocks,
         n_attention_levels=args.n_attention_levels,
+        dit_hidden_size=args.dit_hidden_size,
+        dit_depth=args.dit_depth,
+        dit_num_heads=args.dit_num_heads,
+        dit_patch_size=args.dit_patch_size,
+        n_timesteps=1000,
+        n_inference_steps=args.n_inference_steps,
     )
     model = RFlowModel(opt)
 
-    # Load weights directly
+    # Load weights into whichever backbone was built
     state = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
-    model.netUNet.load_state_dict(state)
-    model.netUNet.to(device).float().eval()
-    print(f"Loaded checkpoint: {args.checkpoint}")
+    model._backbone.load_state_dict(state)
+    model._backbone.to(device).float().eval()
+    print(f"Loaded checkpoint: {args.checkpoint}  (backbone={args.backbone})")
 
     # ── Discover val cases ───────────────────────────────────────────────────
     cases = sorted([d.name for d in latent_dir.iterdir() if d.is_dir()])

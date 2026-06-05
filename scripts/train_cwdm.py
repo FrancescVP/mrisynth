@@ -154,9 +154,15 @@ def parse_args() -> argparse.Namespace:
     g.add_argument("--load_iter",       type=int, default=0)
 
     g = p.add_argument_group("misc")
-    g.add_argument("--device",      default="cuda:0")
-    g.add_argument("--num_workers", type=int, default=4)
-    g.add_argument("--batch_size",  type=int, default=1)
+    g.add_argument("--device",           default="cuda:0")
+    g.add_argument("--num_workers",      type=int, default=4)
+    g.add_argument("--batch_size",       type=int, default=1)
+    g.add_argument("--patch_size",       nargs=3, type=int, default=None,
+                   metavar=("D", "H", "W"),
+                   help="Crop patch for training. None = full volume (OOM risk). "
+                        "Recommended: 64 64 64. DWT requires even dims.")
+    g.add_argument("--patches_per_volume", type=int, default=4,
+                   help="Random crops per volume per epoch when --patch_size is set.")
 
     return p.parse_args()
 
@@ -242,9 +248,13 @@ def main():
     args.name = name
     device = torch.device(args.device)
 
+    patch_size = tuple(args.patch_size) if args.patch_size else None
     train_ds = Pix2Pix3dDataset(
         train_dir, input_channels=input_channels,
-        target_channels=target_channels, patch_size=None, augment=False,
+        target_channels=target_channels,
+        patch_size=patch_size,
+        augment=patch_size is not None,
+        patches_per_volume=args.patches_per_volume if patch_size else 1,
         modality_dropout=args.modality_dropout,
     )
     train_loader = DataLoader(
@@ -257,7 +267,9 @@ def main():
     if val_dir and Path(val_dir).exists():
         val_ds = Pix2Pix3dDataset(
             val_dir, input_channels=input_channels,
-            target_channels=target_channels, patch_size=None, augment=False,
+            target_channels=target_channels,
+            patch_size=patch_size,
+            augment=False,
         )
         val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2)
 
