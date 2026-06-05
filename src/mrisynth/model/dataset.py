@@ -115,6 +115,11 @@ class Pix2Pix3dDataset(Dataset):
             spatial transform samples a fresh random crop each call, repeating
             the same case index gives a different patch — this is a zero-cost
             way to see more of each volume per epoch.
+        modality_dropout: fraction of samples in which exactly one input (A)
+            channel is zeroed (chosen uniformly at random), to train robustness
+            to a missing input sequence. Requires >1 input channel. Applied only
+            when ``augment=True`` (train mode), so validation/inference always
+            see the full input. ``0.0`` disables it entirely.
         case_ids: optional explicit list of case IDs; if ``None`` all ``.npz``
             files in *root* are used.
         dtype: floating-point dtype for image tensors (default ``float32``).
@@ -129,6 +134,7 @@ class Pix2Pix3dDataset(Dataset):
         augment: bool = True,
         aug_cfg: Optional[AugConfig] = None,
         patches_per_volume: int = 1,
+        modality_dropout: float = 0.0,
         case_ids: Optional[Sequence[str]] = None,
         dtype: torch.dtype = torch.float32,
     ):
@@ -140,6 +146,7 @@ class Pix2Pix3dDataset(Dataset):
         self.patch_size = patch_size
         self.augment = augment
         self.patches_per_volume = max(1, patches_per_volume)
+        self.modality_dropout = float(modality_dropout)
         self.dtype = dtype
 
         if case_ids is None:
@@ -196,6 +203,18 @@ class Pix2Pix3dDataset(Dataset):
 
         A   = image[: self.n_A]    # (n_A, D, H, W)
         B   = image[self.n_A :]    # (n_B, D, H, W)
+
+        # 3. Modality dropout (train only): with prob `modality_dropout`, zero
+        # one input channel so the model learns to cope with a missing input.
+        if (
+            self.augment
+            and self.modality_dropout > 0.0
+            and self.n_A > 1
+            and torch.rand(1).item() < self.modality_dropout
+        ):
+            drop = int(torch.randint(self.n_A, (1,)).item())
+            A = A.clone()
+            A[drop] = 0.0
 
         return {
             "A":       A,
