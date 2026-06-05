@@ -115,6 +115,10 @@ def parse_args() -> argparse.Namespace:
                    help="Root containing train/ and val/ subdirs of .npz files.")
     g.add_argument("--train_dir", default=None)
     g.add_argument("--val_dir", default=None)
+    g.add_argument("--modality_dropout", type=float, default=0.0,
+                   help="Fraction of TRAIN samples with one input modality "
+                        "zeroed (robustness to a missing sequence). Needs >1 "
+                        "input channel; 0 disables. Val/inference unaffected.")
 
     g = p.add_argument_group("model")
     g.add_argument("--backbone", default="unet", choices=["unet", "dit"])
@@ -249,6 +253,7 @@ def main():
     train_ds = Pix2Pix3dDataset(
         train_dir, input_channels=input_channels,
         target_channels=target_channels, patch_size=None, augment=False,
+        modality_dropout=args.modality_dropout,
     )
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,

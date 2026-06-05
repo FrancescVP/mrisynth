@@ -117,9 +117,11 @@ class Pix2Pix3dDataset(Dataset):
             way to see more of each volume per epoch.
         modality_dropout: fraction of samples in which exactly one input (A)
             channel is zeroed (chosen uniformly at random), to train robustness
-            to a missing input sequence. Requires >1 input channel. Applied only
-            when ``augment=True`` (train mode), so validation/inference always
-            see the full input. ``0.0`` disables it entirely.
+            to a missing input sequence. Requires >1 input channel. Independent
+            of ``augment`` (the wavelet models train with ``augment=False``);
+            pass ``0.0`` for validation/inference datasets so they always see the
+            full input — the training scripts do this automatically. ``0.0``
+            disables it entirely.
         case_ids: optional explicit list of case IDs; if ``None`` all ``.npz``
             files in *root* are used.
         dtype: floating-point dtype for image tensors (default ``float32``).
@@ -204,11 +206,12 @@ class Pix2Pix3dDataset(Dataset):
         A   = image[: self.n_A]    # (n_A, D, H, W)
         B   = image[self.n_A :]    # (n_B, D, H, W)
 
-        # 3. Modality dropout (train only): with prob `modality_dropout`, zero
-        # one input channel so the model learns to cope with a missing input.
+        # 3. Modality dropout: with prob `modality_dropout`, zero one input
+        # channel so the model learns to cope with a missing input. Independent
+        # of `augment` (wavelet models train with augment=False); val/inference
+        # datasets must pass modality_dropout=0.0.
         if (
-            self.augment
-            and self.modality_dropout > 0.0
+            self.modality_dropout > 0.0
             and self.n_A > 1
             and torch.rand(1).item() < self.modality_dropout
         ):

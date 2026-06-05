@@ -135,6 +135,11 @@ def parse_args() -> argparse.Namespace:
     g.add_argument("--target_key", default="t1c")
     g.add_argument("--cond_keys", nargs="+", default=["t1n", "t2f"])
     g.add_argument("--n_cond", type=int, default=2)
+    g.add_argument("--modality_dropout", type=float, default=0.0,
+                   help="Fraction of TRAIN samples with one conditioning "
+                        "modality zeroed (robustness to a missing sequence). "
+                        "Needs >1 conditioning modality; 0 disables. Validation "
+                        "is deterministic and never affected.")
 
     g = p.add_argument_group("model")
     g.add_argument("--latent_channels", type=int, default=4)
@@ -256,7 +261,8 @@ def main():
     args.name = name
     device = torch.device(args.device)
 
-    train_ds = LatentDataset(train_dir, target_key=target_key, cond_keys=cond_keys)
+    train_ds = LatentDataset(train_dir, target_key=target_key, cond_keys=cond_keys,
+                             modality_dropout=args.modality_dropout)
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
         num_workers=args.num_workers, pin_memory=True, collate_fn=collate_fn,
