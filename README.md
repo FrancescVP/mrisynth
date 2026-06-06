@@ -554,30 +554,41 @@ Based on: [MAISI-v2, arXiv:2508.05772](https://arxiv.org/abs/2508.05772).
 
 **Requirements:** Segmentation latents (`seg.pt`) must be present alongside the cached latents — `generate_latents.py` saves them automatically when segmentation `.npz` channels are present.
 
-**Not yet benchmarked** on this dataset.
+### Sweep results (500-case dataset, 400 epochs)
 
-### Train
+| Experiment | contrastive_weight | temp | Best SSIM | Best MAE |
+|---|---|---|---|---|
+| **maisi_w01_t02** ★ | 0.1 | 0.2 | **0.7523** | **0.0663** |
+| maisi_w01_t01 | 0.1 | 0.1 | 0.7500 | 0.0741 |
+| maisi_w01_t005 | 0.1 | 0.05 | 0.7495 | 0.0675 |
+| maisi_w05_t01 | 0.5 | 0.1 | 0.7431 | 0.0786 |
+| maisi_w10_t01 | 1.0 | 0.1 | 0.7401 | 0.0756 |
 
-Drop-in on top of any Approach 2 / 2.2 / 2.3 command — swap the velocity loss:
+**Takeaways:** Keep weight low (0.1) — higher values let the contrastive term dominate and hurt pixel fidelity.
+Softer temperature (0.2) outperforms sharper (0.05/0.1): with only two ROIs (ET vs background) a too-sharp InfoNCE is over-constrained.
+
+### Train (best config)
 
 ```bash
 uv run python scripts/train_rflow.py \
     --task               t1n_t2f_to_t1c \
-    --latent_root        latents/dataset \
+    --latent_root        latents/dataset_full \
     --vae_ckpt           pretrained/autoencoder_epoch273.pt \
-    --name               rflow_contrastive \
+    --name               maisi_full_best \
     --unet_channels      64 128 256 256 \
     --velocity_loss      l1+contrastive \
     --contrastive_weight 0.1 \
-    --contrastive_temp   0.1 \
+    --contrastive_temp   0.2 \
     --lr                 2e-4 \
     --n_epochs           300 \
+    --n_epochs_decay     100 \
+    --modality_dropout   0.15 \
     --device             cuda:0
 ```
 
-Can be combined with OT-FM coupling: add `--use_ot_coupling`.
+`--modality_dropout 0.15` randomly zeros one input modality in 15% of training samples, making the model robust to missing sequences at inference. Set to 0 if both modalities are always available.
 
-**Tuning `--contrastive_weight`:** start at 0.1. Higher values (0.5–1.0) push ET fidelity harder but risk destabilising the global L1 term. Monitor `loss_rflow` in TensorBoard — it should decrease smoothly.
+Can be combined with OT-FM coupling: add `--use_ot_coupling`.
 
 ### Inference
 
@@ -972,7 +983,7 @@ Not covered by unit tests (require GPU + VAE checkpoint): `model/pix2pix3d.py`, 
 | **LSGAN > vanilla GAN** | Vanilla is unstable at bs=1 (D_real 0.289 vs 0.016 for LSGAN) |
 | **SSIM data-range note** | Use `max_value = gt.max() − gt.min()` for Z-score data, not 1.0 |
 | **OT-FM** (`--use_ot_coupling`) | Mini-batch OT couples noise to targets for shorter flow paths; allows fewer inference steps. Not yet benchmarked on this dataset. |
-| **Region contrastive loss** (`--velocity_loss l1+contrastive`) | InfoNCE term pulls ET-region velocity prediction toward GT, away from BG. Not yet benchmarked on this dataset. |
+| **Region contrastive loss** (`--velocity_loss l1+contrastive`) | Best config: weight=0.1, temp=0.2 → SSIM 0.752, MAE 0.066 (500 cases, 400 ep). Keep weight ≤ 0.1 and temperature ≥ 0.2 — higher weight/lower temp hurts pixel fidelity. |
 | **WFM** (Approach 4) | Wavelet Flow Matching — no VAE, informed prior from conditioning DWTs, ~10 inference steps. Not yet benchmarked on this dataset. |
 | **cWDM** (Approach 5) | Conditional Wavelet Diffusion — no VAE, DDPM train + DDIM inference. Pretrained BraTS weights available. Not yet benchmarked on this dataset. |
 | **ControlNet** (Approach 6) | Seg-guided latent diffusion via MONAI ControlNet; seg masks already cached. Not yet benchmarked on this dataset. |
