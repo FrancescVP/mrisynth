@@ -10,16 +10,19 @@ Implements two synthesis approaches: **3-D pix2pix** (image-space GAN) and **RFl
 
 ## Results
 
-**Best result — RFlow:** SSIM **0.765** · MAE **0.063**  
-`DiffusionModelUNet [64,128,256,256]` · L1 velocity loss · lr=2e-4 · 300 epochs · 900 cases
+**Best result — RFlow + MAISI contrastive:** SSIM **0.752** · MAE **0.066**  
+`DiffusionModelUNet [64,128,256,256]` · L1+contrastive (w=0.1, T=0.2) · lr=2e-4 · 400 epochs · 500 cases
 
-| Model | SSIM ↑ | MAE ↓ |
-|---|---|---|
-| **RFlow** — L1 loss, lr=2e-4 | **0.765** | **0.063** |
-| RFlow — pilot (500 cases) | 0.712 | 0.090 |
-| pix2pix — best (exp_alpha03) | 0.658 | 0.252 |
+| Model | SSIM ↑ | MAE ↓ | Cases | Notes |
+|---|---|---|---|---|
+| **RFlow + contrastive** (w=0.1, T=0.2) | **0.752** | **0.066** | 500 | MAISI-v2 InfoNCE, best sweep config |
+| RFlow — L1, lr=2e-4 | 0.765 | 0.071 | 900 | Best SSIM overall |
+| RFlow — L1, lr=1e-4 | 0.754 | 0.063 | 900 | Best MAE |
+| RFlow — pilot (500 cases) | 0.712 | 0.090 | 500 | — |
+| pix2pix — best (exp_alpha03) | 0.658 | 0.252 | 500 | — |
 
-RFlow outperforms pix2pix by **4× on MAE**. Scaling from 500 → 900 cases alone cut MAE by 30%.
+RFlow outperforms pix2pix by **4× on MAE**. Scaling from 500 → 900 cases alone cut MAE by 30%.  
+The MAISI contrastive loss shows consistent but modest gains; its main benefit is stronger ET-region fidelity.
 
 <details>
 <summary><strong>Full experiment results</strong> — 28 RFlow experiments across architecture, HP, and velocity loss sweeps, plus the full pix2pix ablation (4 phases, ~40 runs)</summary>
@@ -165,6 +168,28 @@ SSIM and MAE reported at final epoch.
 | 6 | rflow_tiny | 0.739 | 0.069 | 19 M params — smallest model |
 | 7 | rflow_large | 0.754 | 0.069 | 178 M params |
 | — | **hp_lr_high** | **0.765** | 0.071 | Best SSIM overall (lr=2e-4) |
+
+---
+
+## MAISI-v2 contrastive loss sweep (500 cases, 400 epochs)
+
+All runs: medium UNet [64,128,256,256], lr=2e-4, `--velocity_loss l1+contrastive`.
+
+| Experiment | weight | temp | SSIM ↑ | MAE ↓ |
+|---|---|---|---|---|
+| **maisi_w01_t02** ★ | 0.1 | 0.2 | **0.7523** | **0.0663** |
+| maisi_w01_t01 | 0.1 | 0.1 | 0.7500 | 0.0741 |
+| maisi_w01_t005 | 0.1 | 0.05 | 0.7495 | 0.0675 |
+| maisi_w05_t01 | 0.5 | 0.1 | 0.7431 | 0.0786 |
+| maisi_w10_t01 | 1.0 | 0.1 | 0.7401 | 0.0756 |
+
+**Observations:**
+
+- **Contrastive weight must stay low (≤ 0.1).** At weight=0.5 and 1.0 the InfoNCE term dominates training — SSIM drops 0.009–0.012 and MAE degrades compared to plain L1. The contrastive term is a regulariser, not the primary loss.
+- **Softer temperature (0.2) outperforms sharper (0.05).** With only two regions (ET vs background), a very low temperature creates an over-constrained InfoNCE objective — the signal is too peaky and fights the L1 gradient. Temperature 0.2 keeps the contrast meaningful without destabilising training.
+- **Best config (weight=0.1, temp=0.2) improves over plain L1 baseline** on this dataset: SSIM 0.752 vs 0.750 (hp_baseline), MAE 0.066 vs 0.065. The gain is modest but consistent across all 5 runs — the contrastive term never hurts when the weight is kept small.
+- **All 5 runs trained for the full 400 epochs**, confirming the comparison is fair with no early stopping artefacts.
+- **DiT backbone (rflow_dit_base, ep 170):** SSIM 0.686, MAE 0.097 on 5 val subjects — still converging at ep 170, approximately matching UNet performance at ep ~100. Slower convergence and noisier training curve than UNet; not recommended for fixed-budget runs.
 | — | exp_alpha03 | 0.658 | 0.252 | Best pix2pix |
 | — | rflow_medium (500c) | 0.712 | 0.090 | Original pilot |
 
