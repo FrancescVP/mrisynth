@@ -18,6 +18,8 @@ Implements two synthesis approaches: **3-D pix2pix** (image-space GAN) and **RFl
 | **RFlow + contrastive** (w=0.1, T=0.2) | **0.752** | **0.066** | 500 | MAISI-v2 InfoNCE, best sweep config |
 | RFlow — L1, lr=2e-4 | 0.765 | 0.071 | 900 | Best SSIM overall |
 | RFlow — L1, lr=1e-4 | 0.754 | 0.063 | 900 | Best MAE |
+| RFlow + OT-FM — L1, lr=2e-4 | 0.731 | 0.087 | 500 | OT-FM coupling, best sweep config |
+| RFlow + DiT — medium, lr=1e-4 | 0.717 | 0.085 | 500 | DiT backbone, best sweep config |
 | RFlow — pilot (500 cases) | 0.712 | 0.090 | 500 | — |
 | pix2pix — best (exp_alpha03) | 0.658 | 0.252 | 500 | — |
 
@@ -194,6 +196,34 @@ All runs: medium UNet [64,128,256,256], lr=2e-4, `--velocity_loss l1+contrastive
 | — | rflow_medium (500c) | 0.712 | 0.090 | Original pilot |
 
 > ⚠ All 900-case RFlow results are directly comparable (same SSIM method, same val set).
+
+---
+
+## RFlow + OT-FM sweep — 500 cases, 300 epochs
+
+Medium UNet [64,128,256,256], `n_epochs=300`, `n_epochs_decay=100`.
+
+| Experiment | lr | Loss | batch | SSIM ↑ | MAE ↓ |
+|---|---|---|---|---|---|
+| **otfm_l1_lr2e4** ★ | 2e-4 | L1 | 1 | **0.731** | 0.087 |
+| otfm_l1_lr1e4 | 1e-4 | L1 | 1 | 0.729 | 0.087 |
+| otfm_l2_lr1e4 | 1e-4 | L2 | 1 | 0.726 | **0.082** |
+| otfm_l1_lr2e4_bs2 | 2e-4 | L1 | 2 | — | — |
+
+---
+
+## RFlow + DiT sweep — 500 cases, 300 epochs
+
+All runs: `--backbone dit`, `n_epochs=300`, `n_epochs_decay=100`, `--velocity_loss l1`.
+
+| Experiment | hidden | depth | heads | lr | grad_clip | SSIM ↑ | MAE ↓ |
+|---|---|---|---|---|---|---|---|
+| dit_small | 256 | 8 | 4 | 1e-4 | 1.0 | 0.703 | 0.088 |
+| **dit_medium** ★ | 384 | 12 | 6 | 1e-4 | 1.0 | **0.717** | 0.085 |
+| dit_large | 512 | 16 | 8 | 1e-4 | 1.0 | 0.714 | 0.083 |
+| dit_medium_lr2e4 | 384 | 12 | 6 | 2e-4 | 1.0 | 0.713 | 0.085 |
+| dit_medium_lr5e5 | 384 | 12 | 6 | 5e-5 | 1.0 | 0.711 | **0.079** |
+| dit_medium_gc05 | 384 | 12 | 6 | 1e-4 | 0.5 | 0.717 | 0.085 |
 
 </details>
 
@@ -493,9 +523,25 @@ Based on: [MOTFM, MICCAI 2025](https://arxiv.org/abs/2503.00266).
 
 **Requirements:** `scipy` (already a project dependency). No-op for `batch_size=1`; effect grows with larger batches.
 
-**Not yet benchmarked** on this dataset.
+### Sweep results (500-case dataset, 300 epochs)
 
-### Train
+All runs: medium UNet [64,128,256,256], `--n_epochs 300 --n_epochs_decay 100`, `batch_size=1`.
+
+| Experiment | lr | Loss | SSIM ↑ | MAE ↓ |
+|---|---|---|---|---|
+| **otfm_l1_lr2e4** ★ | 2e-4 | L1 | **0.731** | 0.087 |
+| otfm_l1_lr1e4 | 1e-4 | L1 | 0.729 | 0.087 |
+| otfm_l2_lr1e4 | 1e-4 | L2 | 0.726 | **0.082** |
+| otfm_l1_lr2e4_bs2 | 2e-4 | L1 (bs=2) | — | — |
+
+> `otfm_l1_lr2e4_bs2` did not complete. OT is a no-op at B=1; its benefit grows with batch size — reduce `unet_channels` if OOM.
+
+**Observations:**
+- OT-FM improves over the plain RFlow 500-case pilot: SSIM 0.712 → 0.731, MAE 0.090 → 0.087.
+- lr=2e-4 transfers from UNet → best SSIM (0.731). lr=1e-4 is a safe fallback.
+- L2 loss gives the lowest MAE (0.082) at cost of SSIM; L1 is better balanced.
+
+### Train (best config)
 
 Drop-in on top of any Approach 2 command — just add `--use_ot_coupling`:
 
@@ -527,9 +573,25 @@ Same as Approach 2 — the coupling only affects training, not inference.
 
 **Tradeoffs:** Higher memory (O(N²) attention, N = latent tokens); `--grad_clip 1.0` is recommended for stable training. For a 32×40×32 latent at patch_size=2, N ≈ 40 k tokens — consider `--batch_size 1` and gradient checkpointing.
 
-**Not yet benchmarked** on this dataset.
+### Sweep results (500-case dataset, 300 epochs)
 
-### Train
+| Experiment | hidden | depth | heads | lr | grad_clip | SSIM ↑ | MAE ↓ |
+|---|---|---|---|---|---|---|---|
+| dit_small | 256 | 8 | 4 | 1e-4 | 1.0 | 0.703 | 0.088 |
+| **dit_medium** ★ | 384 | 12 | 6 | 1e-4 | 1.0 | **0.717** | 0.085 |
+| dit_large | 512 | 16 | 8 | 1e-4 | 1.0 | 0.714 | 0.083 |
+| dit_medium_lr2e4 | 384 | 12 | 6 | 2e-4 | 1.0 | 0.713 | 0.085 |
+| dit_medium_lr5e5 | 384 | 12 | 6 | 5e-5 | 1.0 | 0.711 | **0.079** |
+| dit_medium_gc05 | 384 | 12 | 6 | 1e-4 | 0.5 | 0.717 | 0.085 |
+
+**Observations:**
+- Medium (384/12/6) is the sweet spot — large (512/16/8) adds no benefit at 2× memory cost.
+- DiT converges slower than UNet: SSIM 0.717 at 300 epochs vs UNet 0.765 on the same budget.
+- lr=1e-4 is optimal for DiT — unlike UNet where 2e-4 wins. Higher LR (2e-4) degrades SSIM.
+- Tighter grad_clip (0.5 vs 1.0) makes no difference on medium architecture.
+- lr=5e-5 gives the best MAE (0.079) at the cost of lower SSIM (0.711).
+
+### Train (best config)
 
 ```bash
 uv run python scripts/train_rflow.py \
@@ -1007,7 +1069,8 @@ Not covered by unit tests (require GPU + VAE checkpoint): `model/pix2pix3d.py`, 
 | **λ_feat=0 collapses D (pix2pix)** | D_real → 0.002 at bs=1 without feature matching — always keep it |
 | **LSGAN > vanilla GAN** | Vanilla is unstable at bs=1 (D_real 0.289 vs 0.016 for LSGAN) |
 | **SSIM data-range note** | Use `max_value = gt.max() − gt.min()` for Z-score data, not 1.0 |
-| **OT-FM** (`--use_ot_coupling`) | Mini-batch OT couples noise to targets for shorter flow paths; allows fewer inference steps. Not yet benchmarked on this dataset. |
+| **OT-FM** (`--use_ot_coupling`) | Best config (L1, lr=2e-4): SSIM 0.731, MAE 0.087 (500 cases, 300 ep). +0.019 SSIM over plain RFlow pilot. lr=2e-4 transfers from UNet; L2 gives lower MAE (0.082) at cost of SSIM. |
+| **DiT backbone** (`--backbone dit`) | Best config (medium 384/12/6, lr=1e-4): SSIM 0.717, MAE 0.085 (500 cases, 300 ep). Slower convergence than UNet; lr=1e-4 optimal (vs 2e-4 for UNet). Medium outperforms large at half the memory. |
 | **Region contrastive loss** (`--velocity_loss l1+contrastive`) | Best config: weight=0.1, temp=0.2 → SSIM 0.752, MAE 0.066 (500 cases, 400 ep). Keep weight ≤ 0.1 and temperature ≥ 0.2 — higher weight/lower temp hurts pixel fidelity. |
 | **WFM** (Approach 4) | Wavelet Flow Matching — no VAE, informed prior from conditioning DWTs, ~10 inference steps. Not yet benchmarked on this dataset. |
 | **cWDM** (Approach 5) | Conditional Wavelet Diffusion — no VAE, DDPM train + DDIM inference. Pretrained BraTS weights available. Not yet benchmarked on this dataset. |
